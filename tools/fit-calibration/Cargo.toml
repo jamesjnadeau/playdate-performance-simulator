@@ -1,0 +1,23 @@
+[package]
+name = "fit-calibration"
+description = "Fits a Playdate performance simulator calibration profile to benchmark timings from a real device"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "fit-calibration"
+path = "src/main.rs"
+
+[dependencies]
+pdsim-core = { path = "../../crates/pdsim-core" }
+pdsim-device = { path = "../../crates/pdsim-device" }
+pdsim-runner = { path = "../../crates/pdsim-runner" }
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+clap = { version = "4", features = ["derive"] }

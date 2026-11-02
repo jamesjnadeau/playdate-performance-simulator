@@ -20,6 +20,8 @@ pub struct Ctx {
     pub dead_bitmaps: RefCell<Vec<u32>>,
     pub dead_sprites: RefCell<Vec<u32>>,
     pub native_call_overhead: f64,
+    /// Feature names of the opcodes (`lua.op.MOVE`, ...).
+    op_names: Vec<String>,
 }
 
 pub type CtxRef = Rc<Ctx>;
@@ -41,6 +43,10 @@ impl Ctx {
             dead_bitmaps: RefCell::new(vec![]),
             dead_sprites: RefCell::new(vec![]),
             native_call_overhead: overhead,
+            op_names: crate::vm::opcode_names()
+                .iter()
+                .map(|n| format!("lua.op.{n}"))
+                .collect(),
         })
     }
 
@@ -62,6 +68,15 @@ impl Ctx {
             let mut d = self.dev();
             d.charge(Category::Lua, vm);
             d.charge(Category::Gc, gc);
+            if let Some(f) = &mut d.features {
+                for (name, n) in self.op_names.iter().zip(&delta.ops) {
+                    f.add(name, *n as f64);
+                }
+                f.add("lua.c_calls", delta.c_calls as f64);
+                f.add("lua.alloc_bytes", delta.alloced as f64);
+                f.add("lua.free_bytes", delta.freed as f64);
+                f.add("lua.gc_work", delta.gc_work as f64);
+            }
         }
         if self.profiling.get() && vm + gc > 0.0 {
             let mut stack = lua_stack(lua);
@@ -85,6 +100,9 @@ impl Ctx {
         let c = {
             let mut d = self.dev();
             d.charge(Category::Lua, self.native_call_overhead);
+            if let Some(f) = &mut d.features {
+                f.add("lua.native_calls", 1.0);
+            }
             d.charge_api(cat, name, work) + self.native_call_overhead
         };
         if self.profiling.get() {

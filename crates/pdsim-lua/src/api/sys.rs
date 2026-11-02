@@ -39,7 +39,7 @@ pub fn register(lua: &Lua, pd: &Table, ctx: &CtxRef) -> Result<()> {
     })?;
     reg(lua, pd, "elapsed", ctx, |lua, c, _| {
         c.sync(lua);
-        Ok(c.dev().elapsed_s())
+        Ok(c.dev().elapsed_s_sample())
     })?;
     reg(lua, pd, "reset_elapsed", ctx, |lua, c, _| {
         c.sync(lua);

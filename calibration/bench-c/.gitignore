@@ -1,0 +1,5 @@
+build/
+Source/pdex.elf
+Source/pdex.so
+Source/pdex.dylib
+*.pdx

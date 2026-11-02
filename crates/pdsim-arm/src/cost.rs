@@ -13,12 +13,32 @@ pub enum Exit {
     Return,
 }
 
+/// Instruction classes, in the order of [`BlockInfo::classes`].
+pub const CLASSES: [&str; 12] = [
+    "alu",
+    "mul",
+    "div",
+    "load",
+    "store",
+    "load_multiple",
+    "branch",
+    "call",
+    "fp",
+    "fp_div",
+    "fp_sqrt",
+    "fp_load",
+];
+
 /// Cost and shape of one basic block.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BlockInfo {
     pub cycles: f64,
     pub instructions: u32,
     pub exit: Exit,
+    /// Instructions per class (see [`CLASSES`]).
+    pub classes: [u16; 12],
+    /// Registers moved by load/store-multiple instructions.
+    pub registers: u16,
 }
 
 /// Instruction class of a mnemonic (Capstone syntax, condition and width
@@ -152,16 +172,24 @@ impl BlockCoster {
                 cycles: self.default,
                 instructions: 1,
                 exit: Exit::Fallthrough,
+                classes: [0; 12],
+                registers: 0,
             };
         };
         let mut cycles = 0.0;
         let mut exit = Exit::Fallthrough;
         let mut n = 0;
+        let mut classes = [0u16; 12];
+        let mut registers = 0u16;
         for i in insns.iter() {
             let m = i.mnemonic().unwrap_or("");
             let o = i.op_str().unwrap_or("");
             let (class, regs) = classify(m, o);
             cycles += self.class_cost(class) + regs as f64 * self.per_register;
+            if let Some(k) = CLASSES.iter().position(|c| *c == class) {
+                classes[k] += 1;
+            }
+            registers += regs as u16;
             exit = if class == "call" {
                 Exit::Call
             } else if is_return(m, o) {
@@ -175,6 +203,8 @@ impl BlockCoster {
             cycles,
             instructions: n,
             exit,
+            classes,
+            registers,
         }
     }
 }

@@ -46,6 +46,45 @@ pub struct Device {
     pub stopped: Option<String>,
     /// Stats of the last finished frame.
     pub last_frame: Option<FrameStats>,
+    /// Calibration feature recording (see [`Features`]).
+    pub features: Option<Features>,
+}
+
+/// Records *what work happened* (opcode counts, API calls and the pixels they
+/// touched, ARM instruction classes, ...) between `resetElapsedTime` and
+/// `getElapsedTime`. Pairing each sample with the time the same benchmark
+/// took on a real device is what `fit-calibration` fits the cost model to.
+#[derive(Debug, Clone, Default)]
+pub struct Features {
+    /// Running totals, by feature name (`lua.op.ADD`, `api.graphics.fillRect.pixels`, ...).
+    pub totals: std::collections::BTreeMap<String, f64>,
+    start: std::collections::BTreeMap<String, f64>,
+    /// One entry per `getElapsedTime` call: the features since the last reset.
+    pub samples: Vec<std::collections::BTreeMap<String, f64>>,
+}
+
+impl Features {
+    /// Adds to a feature.
+    pub fn add(&mut self, name: &str, v: f64) {
+        if v != 0.0 {
+            *self.totals.entry(name.to_string()).or_insert(0.0) += v;
+        }
+    }
+
+    fn reset(&mut self) {
+        self.start = self.totals.clone();
+    }
+
+    fn sample(&mut self) {
+        let mut d = std::collections::BTreeMap::new();
+        for (k, v) in &self.totals {
+            let dv = v - self.start.get(k).copied().unwrap_or(0.0);
+            if dv != 0.0 {
+                d.insert(k.clone(), dv);
+            }
+        }
+        self.samples.push(d);
+    }
 }
 
 /// A device shared between a backend and its API bindings.
@@ -75,6 +114,7 @@ impl Device {
             last_rows: [false; pdsim_core::LCD_HEIGHT],
             stopped: None,
             last_frame: None,
+            features: None,
         }
     }
 
@@ -106,6 +146,13 @@ impl Device {
 
     /// Charges an API call by its calibrated cost; returns the cycles.
     pub fn charge_api(&mut self, cat: Category, name: &str, work: Work) -> f64 {
+        if let Some(f) = &mut self.features {
+            f.add(&format!("api.{name}.calls"), 1.0);
+            f.add(&format!("api.{name}.pixels"), work.pixels as f64);
+            f.add(&format!("api.{name}.rows"), work.rows as f64);
+            f.add(&format!("api.{name}.bytes"), work.bytes as f64);
+            f.add(&format!("api.{name}.items"), work.items as f64);
+        }
         let c = self.cal.api_cycles(name, work);
         self.ledger.charge(cat, c);
         c
@@ -114,6 +161,18 @@ impl Device {
     /// `resetElapsedTime`.
     pub fn reset_elapsed(&mut self) {
         self.elapsed_start = self.now_cycles();
+        if let Some(f) = &mut self.features {
+            f.reset();
+        }
+    }
+
+    /// `getElapsedTime` as called by the game: records a feature sample when
+    /// recording is on.
+    pub fn elapsed_s_sample(&mut self) -> f64 {
+        if let Some(f) = &mut self.features {
+            f.sample();
+        }
+        self.elapsed_s()
     }
 
     /// `getElapsedTime`, in seconds.
@@ -147,6 +206,12 @@ impl Device {
         let n = rows.iter().filter(|r| **r).count() as u64;
         let c = self.cal.display_cycles(n);
         self.ledger.charge(Category::Display, c);
+        if let Some(f) = &mut self.features {
+            if n > 0 {
+                f.add("display.updates", 1.0);
+                f.add("display.rows", n as f64);
+            }
+        }
         self.last_rows = rows;
         let memory = MemoryStats {
             lua_heap,
@@ -201,6 +266,22 @@ mod tests {
         let f = d.end_frame(0);
         assert_eq!(f.rows_updated, 0);
         assert_eq!(f.cycles.total(), 0);
+    }
+
+    #[test]
+    fn features_bracket_elapsed_time() {
+        let tmp = std::env::temp_dir();
+        let mut d = Device::new(Calibration::default_estimates(), &tmp, &tmp, None);
+        d.features = Some(Features::default());
+        d.charge_api(Category::Gfx, "graphics.fillRect", Work::pixels(100, 10));
+        d.reset_elapsed();
+        d.charge_api(Category::Gfx, "graphics.fillRect", Work::pixels(50, 5));
+        d.charge_api(Category::Gfx, "graphics.fillRect", Work::pixels(50, 5));
+        d.elapsed_s_sample();
+        let s = &d.features.as_ref().unwrap().samples[0];
+        assert_eq!(s["api.graphics.fillRect.calls"], 2.0);
+        assert_eq!(s["api.graphics.fillRect.pixels"], 100.0);
+        assert_eq!(s["api.graphics.fillRect.rows"], 10.0);
     }
 
     #[test]

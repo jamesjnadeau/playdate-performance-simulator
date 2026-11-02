@@ -1,0 +1,6 @@
+name=pdsim C Bench
+author=Playdate Performance Simulator
+description=Microbenchmarks for calibrating the performance simulator
+bundleID=dev.pdsim.benchc
+version=1.0
+buildNumber=1

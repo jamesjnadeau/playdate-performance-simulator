@@ -392,7 +392,8 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
         "system.getElapsedTime" => {
             uc.get_data_mut().sync();
             charge(uc, Category::Other, "system.getElapsedTime", Work::default());
-            Some(Ret::F(dev.borrow().elapsed_s() as f32))
+            let t = dev.borrow_mut().elapsed_s_sample();
+            Some(Ret::F(t as f32))
         }
         "system.resetElapsedTime" => {
             uc.get_data_mut().sync();

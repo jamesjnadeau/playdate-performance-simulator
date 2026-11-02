@@ -85,6 +85,9 @@ pub struct ArmState {
     pub scratch_next: u32,
     pub profile: bool,
     pub button_cb: Option<(u32, u32)>,
+    /// Instructions per class not yet reported as features.
+    class_counts: [f64; 12],
+    registers: f64,
 }
 
 impl ArmState {
@@ -114,10 +117,19 @@ impl ArmState {
 
     /// Charges pending C cycles to the ledger.
     pub fn sync(&mut self) {
+        let mut d = self.dev.borrow_mut();
         if self.pending > 0.0 {
-            self.dev.borrow_mut().charge(Category::C, self.pending);
+            d.charge(Category::C, self.pending);
             self.pending = 0.0;
         }
+        if let Some(f) = &mut d.features {
+            for (i, c) in crate::cost::CLASSES.iter().enumerate() {
+                f.add(&format!("arm.{c}"), self.class_counts[i]);
+            }
+            f.add("arm.registers", self.registers);
+        }
+        self.class_counts = [0.0; 12];
+        self.registers = 0.0;
     }
 
     /// Moves per-stack cycles into the device's frame profile.
@@ -484,6 +496,8 @@ impl ArmGame {
             scratch_next: SCRATCH_ADDR,
             profile,
             button_cb: None,
+            class_counts: [0.0; 12],
+            registers: 0.0,
         };
         let mut uc =
             Unicorn::new_with_data(Arch::ARM, Mode::THUMB | Mode::MCLASS, state).map_err(uerr("unicorn"))?;
@@ -553,6 +567,10 @@ impl ArmGame {
             }
             st.last_exit = info.exit;
             st.pending += info.cycles;
+            for (k, n) in info.classes.iter().enumerate() {
+                st.class_counts[k] += *n as f64;
+            }
+            st.registers += info.registers as f64;
             st.frame_cycles += info.cycles;
             let id = st.stack_id;
             if let Some(c) = st.stack_cycles.get_mut(id) {
