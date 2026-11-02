@@ -1,0 +1,13 @@
+[package]
+name = "pdsim-gfx"
+description = "1-bit Playdate graphics with per-call work counting for the performance simulator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+pdsim-core = { path = "../pdsim-core" }
+png = "0.17"
+thiserror.workspace = true
+base64 = "0.22"
