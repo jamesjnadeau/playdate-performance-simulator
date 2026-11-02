@@ -1,0 +1,397 @@
+{
+  "name": "Built-in estimates (not device calibrated)",
+  "device": "rev-a",
+  "estimated": true,
+  "cpu_hz": 168000000,
+  "ram_bytes": 16777216,
+  "default_refresh_rate": 30.0,
+  "lua": {
+    "opcodes": {
+      "MOVE": 9.0,
+      "LOADI": 8.0,
+      "LOADF": 9.0,
+      "LOADK": 10.0,
+      "LOADKX": 12.0,
+      "LOADFALSE": 7.0,
+      "LFALSESKIP": 9.0,
+      "LOADTRUE": 7.0,
+      "LOADNIL": 9.0,
+      "GETUPVAL": 12.0,
+      "SETUPVAL": 22.0,
+      "GETTABUP": 42.0,
+      "GETTABLE": 34.0,
+      "GETI": 22.0,
+      "GETFIELD": 36.0,
+      "SETTABUP": 48.0,
+      "SETTABLE": 40.0,
+      "SETI": 26.0,
+      "SETFIELD": 42.0,
+      "NEWTABLE": 320.0,
+      "SELF": 42.0,
+      "ADDI": 11.0,
+      "ADDK": 12.0,
+      "SUBK": 12.0,
+      "MULK": 13.0,
+      "MODK": 30.0,
+      "POWK": 260.0,
+      "DIVK": 38.0,
+      "IDIVK": 34.0,
+      "BANDK": 12.0,
+      "BORK": 12.0,
+      "BXORK": 12.0,
+      "SHRI": 12.0,
+      "SHLI": 12.0,
+      "ADD": 13.0,
+      "SUB": 13.0,
+      "MUL": 14.0,
+      "MOD": 32.0,
+      "POW": 270.0,
+      "DIV": 40.0,
+      "IDIV": 36.0,
+      "BAND": 13.0,
+      "BOR": 13.0,
+      "BXOR": 13.0,
+      "SHL": 14.0,
+      "SHR": 14.0,
+      "MMBIN": 160.0,
+      "MMBINI": 160.0,
+      "MMBINK": 160.0,
+      "UNM": 11.0,
+      "BNOT": 11.0,
+      "NOT": 9.0,
+      "LEN": 24.0,
+      "CONCAT": 260.0,
+      "CLOSE": 30.0,
+      "TBC": 40.0,
+      "JMP": 6.0,
+      "EQ": 14.0,
+      "LT": 13.0,
+      "LE": 13.0,
+      "EQK": 11.0,
+      "EQI": 10.0,
+      "LTI": 10.0,
+      "LEI": 10.0,
+      "GTI": 10.0,
+      "GEI": 10.0,
+      "TEST": 8.0,
+      "TESTSET": 10.0,
+      "CALL": 115.0,
+      "TAILCALL": 120.0,
+      "RETURN": 70.0,
+      "RETURN0": 40.0,
+      "RETURN1": 45.0,
+      "FORLOOP": 13.0,
+      "FORPREP": 30.0,
+      "TFORPREP": 20.0,
+      "TFORCALL": 120.0,
+      "TFORLOOP": 12.0,
+      "SETLIST": 40.0,
+      "CLOSURE": 280.0,
+      "VARARG": 60.0,
+      "VARARGPREP": 50.0,
+      "EXTRAARG": 4.0
+    },
+    "default_opcode": 20.0,
+    "gc_per_alloc_byte": 0.9,
+    "gc_per_free_byte": 0.3,
+    "gc_per_work_unit": 1.6,
+    "native_call_overhead": 160.0
+  },
+  "arm": {
+    "classes": {
+      "alu": 1.0,
+      "mul": 1.0,
+      "div": 7.0,
+      "load": 2.0,
+      "store": 1.0,
+      "load_multiple": 1.0,
+      "branch": 2.0,
+      "call": 3.0,
+      "fp": 1.0,
+      "fp_div": 14.0,
+      "fp_sqrt": 14.0,
+      "fp_load": 2.0,
+      "other": 1.0
+    },
+    "per_register": 1.0,
+    "default_class": 1.0
+  },
+  "api": {
+    "graphics.clear": {
+      "base": 400.0,
+      "per_pixel": 0.03,
+      "per_row": 28.0
+    },
+    "graphics.fillRect": {
+      "base": 600.0,
+      "per_pixel": 0.04,
+      "per_row": 25.0
+    },
+    "graphics.drawRect": {
+      "base": 700.0,
+      "per_pixel": 0.6,
+      "per_row": 20.0
+    },
+    "graphics.drawLine": {
+      "base": 500.0,
+      "per_pixel": 6.0
+    },
+    "graphics.drawPixel": {
+      "base": 250.0
+    },
+    "graphics.fillCircle": {
+      "base": 1200.0,
+      "per_pixel": 0.06,
+      "per_row": 40.0
+    },
+    "graphics.drawCircle": {
+      "base": 1200.0,
+      "per_pixel": 5.0
+    },
+    "graphics.fillEllipse": {
+      "base": 1400.0,
+      "per_pixel": 0.06,
+      "per_row": 45.0
+    },
+    "graphics.drawEllipse": {
+      "base": 1400.0,
+      "per_pixel": 5.0
+    },
+    "graphics.fillTriangle": {
+      "base": 1100.0,
+      "per_pixel": 0.06,
+      "per_row": 40.0
+    },
+    "graphics.fillPolygon": {
+      "base": 1500.0,
+      "per_pixel": 0.07,
+      "per_row": 45.0,
+      "per_item": 120.0
+    },
+    "graphics.drawPolygon": {
+      "base": 900.0,
+      "per_pixel": 6.0,
+      "per_item": 80.0
+    },
+    "graphics.fillRoundRect": {
+      "base": 1400.0,
+      "per_pixel": 0.05,
+      "per_row": 35.0
+    },
+    "graphics.drawRoundRect": {
+      "base": 1400.0,
+      "per_pixel": 5.0
+    },
+    "graphics.drawText": {
+      "base": 1500.0,
+      "per_pixel": 0.15,
+      "per_item": 600.0
+    },
+    "graphics.getTextSize": {
+      "base": 800.0,
+      "per_item": 150.0
+    },
+    "graphics.drawBitmap": {
+      "base": 700.0,
+      "per_pixel": 0.12,
+      "per_row": 40.0
+    },
+    "graphics.drawScaledBitmap": {
+      "base": 1500.0,
+      "per_pixel": 1.2,
+      "per_row": 60.0
+    },
+    "graphics.drawRotatedBitmap": {
+      "base": 3000.0,
+      "per_pixel": 3.0,
+      "per_row": 80.0
+    },
+    "graphics.tileBitmap": {
+      "base": 900.0,
+      "per_pixel": 0.12,
+      "per_row": 40.0
+    },
+    "graphics.setDrawMode": {
+      "base": 80.0
+    },
+    "graphics.setColor": {
+      "base": 80.0
+    },
+    "graphics.setPattern": {
+      "base": 150.0
+    },
+    "graphics.setDitherPattern": {
+      "base": 250.0
+    },
+    "graphics.setClipRect": {
+      "base": 120.0
+    },
+    "graphics.setDrawOffset": {
+      "base": 80.0
+    },
+    "graphics.pushContext": {
+      "base": 400.0
+    },
+    "graphics.popContext": {
+      "base": 300.0
+    },
+    "graphics.newBitmap": {
+      "base": 2000.0,
+      "per_byte": 0.5
+    },
+    "graphics.loadBitmap": {
+      "base": 20000.0,
+      "per_byte": 4.0
+    },
+    "graphics.copyBitmap": {
+      "base": 1200.0,
+      "per_byte": 0.25
+    },
+    "graphics.loadFont": {
+      "base": 30000.0,
+      "per_byte": 4.0
+    },
+    "graphics.markUpdatedRows": {
+      "base": 100.0,
+      "per_row": 5.0
+    },
+    "graphics.checkMaskCollision": {
+      "base": 1500.0,
+      "per_pixel": 0.2
+    },
+    "sprite.update": {
+      "base": 2500.0,
+      "per_pixel": 0.12,
+      "per_row": 40.0,
+      "per_item": 1800.0
+    },
+    "sprite.add": {
+      "base": 600.0
+    },
+    "sprite.remove": {
+      "base": 600.0
+    },
+    "sprite.moveTo": {
+      "base": 450.0
+    },
+    "sprite.moveWithCollisions": {
+      "base": 2200.0,
+      "per_item": 900.0
+    },
+    "sprite.checkCollisions": {
+      "base": 2000.0,
+      "per_item": 900.0
+    },
+    "sprite.overlappingSprites": {
+      "base": 1500.0,
+      "per_item": 700.0
+    },
+    "sprite.querySpritesAtPoint": {
+      "base": 1500.0,
+      "per_item": 500.0
+    },
+    "sprite.querySpritesInRect": {
+      "base": 1500.0,
+      "per_item": 500.0
+    },
+    "sprite.setImage": {
+      "base": 400.0
+    },
+    "sprite.markDirty": {
+      "base": 200.0
+    },
+    "sprite.addDirtyRect": {
+      "base": 250.0
+    },
+    "sprite.redrawBackground": {
+      "base": 800.0
+    },
+    "system.getButtonState": {
+      "base": 150.0
+    },
+    "system.getCrankChange": {
+      "base": 120.0
+    },
+    "system.getCrankAngle": {
+      "base": 100.0
+    },
+    "system.getElapsedTime": {
+      "base": 150.0
+    },
+    "system.getCurrentTimeMilliseconds": {
+      "base": 120.0
+    },
+    "system.realloc": {
+      "base": 450.0,
+      "per_byte": 0.02
+    },
+    "system.logToConsole": {
+      "base": 3000.0,
+      "per_byte": 8.0
+    },
+    "system.formatString": {
+      "base": 2500.0,
+      "per_byte": 6.0
+    },
+    "system.drawFPS": {
+      "base": 4000.0
+    },
+    "file.read": {
+      "base": 9000.0,
+      "per_byte": 1.5
+    },
+    "file.write": {
+      "base": 12000.0,
+      "per_byte": 3.0
+    },
+    "file.open": {
+      "base": 40000.0
+    },
+    "file.close": {
+      "base": 8000.0
+    },
+    "datastore.write": {
+      "base": 60000.0,
+      "per_byte": 12.0
+    },
+    "datastore.read": {
+      "base": 40000.0,
+      "per_byte": 8.0
+    },
+    "json.encode": {
+      "base": 5000.0,
+      "per_byte": 20.0
+    },
+    "json.decode": {
+      "base": 5000.0,
+      "per_byte": 25.0
+    },
+    "sound.playNote": {
+      "base": 2500.0
+    },
+    "sound.play": {
+      "base": 2000.0
+    },
+    "sound.update": {
+      "base": 1000.0,
+      "per_item": 2200.0
+    },
+    "timer.update": {
+      "base": 500.0,
+      "per_item": 450.0
+    },
+    "math.random": {
+      "base": 140.0
+    },
+    "geometry.op": {
+      "base": 220.0
+    }
+  },
+  "api_default": {
+    "base": 400.0
+  },
+  "display": {
+    "base": 4000.0,
+    "per_row": 420.0
+  }
+}

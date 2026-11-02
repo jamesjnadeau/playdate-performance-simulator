@@ -1,0 +1,7 @@
+/target
+**/target
+/.superpowers
+node_modules
+dist
+*.pdx
+/app/src-tauri/gen
