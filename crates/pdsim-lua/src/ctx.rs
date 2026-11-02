@@ -5,6 +5,7 @@ use mlua::Lua;
 use pdsim_core::{Category, Work};
 use pdsim_device::{Device, SharedDevice};
 use std::cell::{Cell, RefCell, RefMut};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 /// Shared binding context.
@@ -22,6 +23,11 @@ pub struct Ctx {
     pub native_call_overhead: f64,
     /// Feature names of the opcodes (`lua.op.MOVE`, ...).
     op_names: Vec<String>,
+    /// Standard-library C function names by function pointer.
+    cfunc_names: HashMap<usize, String>,
+    /// Per counter slot, once seen: its feature name (`lua.cfunc.math.sin`)
+    /// and extra cost, or `None` for C functions without either.
+    cfunc_slots: RefCell<Vec<Option<Option<(String, f64)>>>>,
 }
 
 pub type CtxRef = Rc<Ctx>;
@@ -33,6 +39,7 @@ impl Ctx {
             let d = dev.borrow();
             (CostTable::new(&d.cal), d.cal.lua.native_call_overhead)
         };
+        let cfunc_names = crate::vm::cfunc_names(lua);
         let last = unsafe { Counters::read(raw) };
         Rc::new(Ctx {
             dev,
@@ -47,7 +54,38 @@ impl Ctx {
                 .iter()
                 .map(|n| format!("lua.op.{n}"))
                 .collect(),
+            cfunc_names,
+            cfunc_slots: RefCell::new(vec![]),
         })
+    }
+
+    /// Named C functions called in `delta`: (feature name, calls, extra cost).
+    fn cfunc_calls(&self, delta: &Counters) -> Vec<(String, f64, f64)> {
+        let mut slots = self.cfunc_slots.borrow_mut();
+        let mut out = vec![];
+        for (i, &n) in delta.cfunc_calls.iter().enumerate() {
+            if n == 0 {
+                continue;
+            }
+            if slots.len() <= i || slots[i].is_none() {
+                // A new function took this slot; look the slots up again.
+                let funcs = unsafe { crate::vm::cfunc_slots(self.raw) };
+                let d = self.dev.borrow();
+                slots.resize(funcs.len(), None);
+                for (s, f) in slots.iter_mut().zip(funcs) {
+                    if s.is_none() && f != 0 {
+                        *s = Some(self.cfunc_names.get(&f).map(|name| {
+                            let extra = d.cal.lua.c_functions.get(name).copied().unwrap_or(0.0);
+                            (format!("lua.cfunc.{name}"), extra)
+                        }));
+                    }
+                }
+            }
+            if let Some(Some((name, extra))) = &slots[i] {
+                out.push((name.clone(), n as f64, *extra));
+            }
+        }
+        out
     }
 
     /// Mutable access to the device.
@@ -62,7 +100,9 @@ impl Ctx {
         let now = unsafe { Counters::read(self.raw) };
         let delta = now.since(&self.last.borrow());
         *self.last.borrow_mut() = now;
-        let vm = self.costs.vm_cycles(&delta);
+        let cfuncs = self.cfunc_calls(&delta);
+        let vm = self.costs.vm_cycles(&delta)
+            + cfuncs.iter().map(|(_, n, k)| n * k).sum::<f64>();
         let gc = self.costs.gc_cycles(&delta);
         {
             let mut d = self.dev();
@@ -73,6 +113,9 @@ impl Ctx {
                     f.add(name, *n as f64);
                 }
                 f.add("lua.c_calls", delta.c_calls as f64);
+                for (name, n, _) in &cfuncs {
+                    f.add(name, *n);
+                }
                 f.add("lua.alloc_bytes", delta.alloced as f64);
                 f.add("lua.free_bytes", delta.freed as f64);
                 f.add("lua.gc_work", delta.gc_work as f64);

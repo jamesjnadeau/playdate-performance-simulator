@@ -15,13 +15,18 @@ What the patch adds, all to `global_State`:
   `lgc.c`).
 - `pdsim_ccalls` — C functions called by game code (`precallC` in `ldo.c`),
   charged at an average calibrated cost.
+- `pdsim_cfunc[]` / `pdsim_cfunc_calls[]` — the same calls per C function, in
+  a small open-addressed table keyed by function pointer (`pdsim_countcfunc`
+  in `pdsim.c`). The simulator names the standard library's functions
+  (`math.sin`, `next`, ...) and adds each one's calibrated extra cost.
 - `pdsim_native_opcount[op]` — instructions run by functions from chunks named
   `=[pdsim]...` (the simulator's API written in Lua). These, and the C
   functions they call, are not charged as game code; the API charges its own
   calibrated cost.
 
-`pdsim.c` exports `pdsim_counters`, `pdsim_native_instructions`,
-`pdsim_num_opcodes` and `pdsim_opname`.
+`pdsim.c` exports `pdsim_counters`, `pdsim_cfunc_counters`,
+`pdsim_native_instructions`, `pdsim_num_cfunc_slots`, `pdsim_num_opcodes` and
+`pdsim_opname`.
 
 `build.rs` also defines `luai_makeseed` to a constant so string hashing (and
 so table iteration order) is the same in every run.

@@ -545,7 +545,7 @@ l_sinline int precallC (lua_State *L, StkId func, int nresults,
   CallInfo *ci;
   checkstackGCp(L, LUA_MINSTACK, func);  /* ensure minimum stack size */
   if (!(isLua(L->ci) && pdsim_isnative(ci_func(L->ci)->p)))
-    G(L)->pdsim_ccalls++;  /* pdsim: a C function called by game code */
+    pdsim_countcfunc(L, f);  /* pdsim: a C function called by game code */
   L->ci = ci = prepCallInfo(L, func, nresults, CIST_C,
                                L->top.p + LUA_MINSTACK);
   lua_assert(ci->top.p <= L->stack_last.p);

@@ -1,0 +1,635 @@
+{
+  "name": "Fitted from 213 device benchmark runs (rev-a)",
+  "device": "rev-a",
+  "estimated": false,
+  "cpu_hz": 168000000,
+  "ram_bytes": 16777216,
+  "default_refresh_rate": 30.0,
+  "lua": {
+    "opcodes": {
+      "ADD": 102.19831269217939,
+      "ADDI": 35.10730610602724,
+      "ADDK": 22.48339279876986,
+      "BAND": 13.0,
+      "BANDK": 13.275267169279912,
+      "BNOT": 11.0,
+      "BOR": 13.0,
+      "BORK": 12.0,
+      "BXOR": 13.0,
+      "BXORK": 12.0,
+      "CALL": 210.63445295858054,
+      "CLOSE": 123.34261498087412,
+      "CLOSURE": 8396.489432294327,
+      "CONCAT": 12183.1017915225,
+      "DIV": 40.0,
+      "DIVK": 143.12513334250903,
+      "EQ": 14.0,
+      "EQI": 22.712788944213386,
+      "EQK": 11.0,
+      "EXTRAARG": 4.0,
+      "FORLOOP": 69.16148082501785,
+      "FORPREP": 0.0,
+      "GEI": 10.0,
+      "GETFIELD": 0.0,
+      "GETI": 0.0,
+      "GETTABLE": 12.344859531350302,
+      "GETTABUP": 250.35062954062425,
+      "GETUPVAL": 509.07514880384815,
+      "GTI": 10.0,
+      "IDIV": 36.0,
+      "IDIVK": 93.4467347608374,
+      "JMP": 6.00224363535105,
+      "LE": 13.0,
+      "LEI": 10.0,
+      "LEN": 299.77979071224786,
+      "LFALSESKIP": 9.0,
+      "LOADF": 9.0,
+      "LOADFALSE": 7.0,
+      "LOADI": 0.0,
+      "LOADK": 0.0,
+      "LOADKX": 12.0,
+      "LOADNIL": 9.000714242109566,
+      "LOADTRUE": 7.0,
+      "LT": 13.0,
+      "LTI": 22.71902126365141,
+      "MMBIN": 160.0,
+      "MMBINI": 160.0,
+      "MMBINK": 160.0,
+      "MOD": 32.0,
+      "MODK": 76.28205993443224,
+      "MOVE": 84.5414048336487,
+      "MUL": 16.7832709860308,
+      "MULK": 92.48178916965891,
+      "NEWTABLE": 3931.0699891343884,
+      "NOT": 9.0,
+      "POW": 270.0,
+      "POWK": 148.8272790687379,
+      "RETURN": 70.0458731681679,
+      "RETURN0": 62.99057322002849,
+      "RETURN1": 245.67412968481588,
+      "SELF": 401.25340670179844,
+      "SETFIELD": 249.0010183583649,
+      "SETI": 88.3717957663697,
+      "SETLIST": 4287.849516196303,
+      "SETTABLE": 39.66272222953022,
+      "SETTABUP": 0.0,
+      "SETUPVAL": 114.11212973506633,
+      "SHL": 14.0,
+      "SHLI": 12.0,
+      "SHR": 14.0,
+      "SHRI": 12.0,
+      "SUB": 13.0,
+      "SUBK": 12.0,
+      "TAILCALL": 468.24769393304643,
+      "TBC": 40.0,
+      "TEST": 8.0,
+      "TESTSET": 10.0,
+      "TFORCALL": 393.1450114326244,
+      "TFORLOOP": 12.0,
+      "TFORPREP": 20.075873614277896,
+      "UNM": 0.0,
+      "VARARG": 95.94061969264816,
+      "VARARGPREP": 74.95876367776462
+    },
+    "default_opcode": 20.0,
+    "gc_per_alloc_byte": 11.741919501950495,
+    "gc_per_free_byte": 9.74198724437767,
+    "gc_per_work_unit": 14.021286180806593,
+    "native_call_overhead": 0.0,
+    "c_function_call": 497.2796534117235,
+    "c_functions": {
+      "collectgarbage": 1.3047670799136815,
+      "ipairs": 4.0578093343508685,
+      "ipairs.iter": 409.8387428289101,
+      "math.abs": 0.0,
+      "math.floor": 687.297528704772,
+      "math.max": 687.2975287090106,
+      "math.sin": 1928.1932921078367,
+      "next": 517.4126973681833,
+      "pairs": 5.122897993292771,
+      "select": 483.2016647911251
+    }
+  },
+  "arm": {
+    "classes": {
+      "alu": 1.065421111628609,
+      "branch": 1.2317771014554237,
+      "call": 0.6461930013940901,
+      "div": 8.99801233546191,
+      "fp": 3.6712576926855767,
+      "fp_div": 24.959419260212705,
+      "fp_load": 1.2029838647671416,
+      "fp_sqrt": 19.94067197574991,
+      "load": 1.571575081336565,
+      "load_multiple": 0.9254251411287777,
+      "mul": 2.5199161140931308,
+      "other": 1.0,
+      "store": 1.3211120598007575
+    },
+    "per_register": 0.3553411646536861,
+    "default_class": 1.0
+  },
+  "api": {
+    "datastore.read": {
+      "base": 40000.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 8.0,
+      "per_item": 0.0
+    },
+    "datastore.write": {
+      "base": 60000.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 12.0,
+      "per_item": 0.0
+    },
+    "file.close": {
+      "base": 8000.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "file.open": {
+      "base": 40000.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "file.read": {
+      "base": 9000.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 1.5,
+      "per_item": 0.0
+    },
+    "file.write": {
+      "base": 12000.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 3.0,
+      "per_item": 0.0
+    },
+    "geometry.op": {
+      "base": 220.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "graphics.checkMaskCollision": {
+      "base": 1500.0,
+      "per_pixel": 0.2,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "graphics.clear": {
+      "base": 466.44888484317545,
+      "per_pixel": 0.06588239781813486,
+      "per_row": 106.14388861344318,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "graphics.copyBitmap": {
+      "base": 1200.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.25,
+      "per_item": 0.0
+    },
+    "graphics.drawBitmap": {
+      "base": 4151.485498491058,
+      "per_pixel": 1.0807798727406281,
+      "per_row": 204.2829200549983,
+      "per_byte": 0.000834010306204349,
+      "per_item": 0.0
+    },
+    "graphics.drawCircle": {
+      "base": 1200.0,
+      "per_pixel": 5.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "graphics.drawEllipse": {
+      "base": 13840.221413824467,
+      "per_pixel": 33.56173283780843,
+      "per_row": 0.00004062113114726409,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "graphics.drawLine": {
+      "base": 1238.5125936194715,
+      "per_pixel": 101.38082286287045,
+      "per_row": 0.00015919444126612892,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "graphics.drawPixel": {
+      "base": 250.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "graphics.drawPolygon": {
+      "base": 900.0,
+      "per_pixel": 6.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 80.0
+    },
+    "graphics.drawRect": {
+      "base": 5342.17722198035,
+      "per_pixel": 1.4594659542411248,
+      "per_row": 262.53007527218665,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "graphics.drawRotatedBitmap": {
+      "base": 25994.431432561076,
+      "per_pixel": 97.1851911479241,
+      "per_row": 1518.9404203119188,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "graphics.drawRoundRect": {
+      "base": 1400.0,
+      "per_pixel": 5.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "graphics.drawScaledBitmap": {
+      "base": 3099.8083884493876,
+      "per_pixel": 17.975206807201673,
+      "per_row": 387.6407579555399,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "graphics.drawText": {
+      "base": 5105.676317239509,
+      "per_pixel": 2.783605960435729,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 3350.9854353392875
+    },
+    "graphics.fillCircle": {
+      "base": 1200.0,
+      "per_pixel": 0.06,
+      "per_row": 40.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "graphics.fillEllipse": {
+      "base": 614.4997809768784,
+      "per_pixel": 0.10139649228965744,
+      "per_row": 209.3178617462831,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "graphics.fillPolygon": {
+      "base": 4737.666320176335,
+      "per_pixel": 0.10719359120628898,
+      "per_row": 281.02587474440685,
+      "per_byte": 0.0,
+      "per_item": 223.60532224956103
+    },
+    "graphics.fillRect": {
+      "base": 201.6637714412681,
+      "per_pixel": 0.24489537447365753,
+      "per_row": 131.1161554695931,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "graphics.fillRoundRect": {
+      "base": 12053.921235819673,
+      "per_pixel": 0.1308828306076741,
+      "per_row": 434.5220463456653,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "graphics.fillTriangle": {
+      "base": 2703.516375723311,
+      "per_pixel": 0.07742770508552703,
+      "per_row": 211.74853082965612,
+      "per_byte": 0.0,
+      "per_item": 3.97566043587995e-7
+    },
+    "graphics.getTextSize": {
+      "base": 800.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 150.0
+    },
+    "graphics.loadBitmap": {
+      "base": 20000.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 4.0,
+      "per_item": 0.0
+    },
+    "graphics.loadFont": {
+      "base": 30000.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 4.0,
+      "per_item": 0.0
+    },
+    "graphics.markUpdatedRows": {
+      "base": 100.0,
+      "per_pixel": 0.0,
+      "per_row": 5.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "graphics.newBitmap": {
+      "base": 2000.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.5,
+      "per_item": 0.0
+    },
+    "graphics.popContext": {
+      "base": 300.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "graphics.pushContext": {
+      "base": 400.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "graphics.setClipRect": {
+      "base": 120.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "graphics.setColor": {
+      "base": 80.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "graphics.setDitherPattern": {
+      "base": 2297.670933403588,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "graphics.setDrawMode": {
+      "base": 80.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "graphics.setDrawOffset": {
+      "base": 80.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "graphics.setPattern": {
+      "base": 150.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "graphics.tileBitmap": {
+      "base": 900.0,
+      "per_pixel": 0.12,
+      "per_row": 40.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "json.decode": {
+      "base": 5000.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 25.0,
+      "per_item": 0.0
+    },
+    "json.encode": {
+      "base": 5000.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 20.0,
+      "per_item": 0.0
+    },
+    "math.random": {
+      "base": 140.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "sound.play": {
+      "base": 2000.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "sound.playNote": {
+      "base": 2500.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "sound.update": {
+      "base": 1000.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 2200.0
+    },
+    "sprite.add": {
+      "base": 133493.75840631398,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "sprite.addDirtyRect": {
+      "base": 250.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "sprite.checkCollisions": {
+      "base": 2000.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 900.0
+    },
+    "sprite.markDirty": {
+      "base": 200.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "sprite.moveTo": {
+      "base": 3352.931427926437,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "sprite.moveWithCollisions": {
+      "base": 2200.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 900.0
+    },
+    "sprite.overlappingSprites": {
+      "base": 1500.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 700.0
+    },
+    "sprite.querySpritesAtPoint": {
+      "base": 1500.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 500.0
+    },
+    "sprite.querySpritesInRect": {
+      "base": 1500.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 500.0
+    },
+    "sprite.redrawBackground": {
+      "base": 800.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "sprite.remove": {
+      "base": 600.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "sprite.setImage": {
+      "base": 400.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "sprite.update": {
+      "base": 0.0,
+      "per_pixel": 6.139250478088121,
+      "per_row": 133.65031830701952,
+      "per_byte": 0.0016121560416215094,
+      "per_item": 4284.867803037723
+    },
+    "system.drawFPS": {
+      "base": 4000.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "system.formatString": {
+      "base": 2500.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 6.0,
+      "per_item": 0.0
+    },
+    "system.getButtonState": {
+      "base": 150.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "system.getCrankAngle": {
+      "base": 100.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "system.getCrankChange": {
+      "base": 120.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "system.getCurrentTimeMilliseconds": {
+      "base": 120.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "system.getElapsedTime": {
+      "base": 16337.775074869332,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 0.0
+    },
+    "system.logToConsole": {
+      "base": 3000.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 8.0,
+      "per_item": 0.0
+    },
+    "system.realloc": {
+      "base": 450.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.02,
+      "per_item": 0.0
+    },
+    "timer.update": {
+      "base": 500.0,
+      "per_pixel": 0.0,
+      "per_row": 0.0,
+      "per_byte": 0.0,
+      "per_item": 450.0
+    }
+  },
+  "api_default": {
+    "base": 400.0,
+    "per_pixel": 0.0,
+    "per_row": 0.0,
+    "per_byte": 0.0,
+    "per_item": 0.0
+  },
+  "display": {
+    "base": 4000.0,
+    "per_row": 420.0
+  }
+}

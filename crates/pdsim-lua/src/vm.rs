@@ -1,6 +1,7 @@
 //! Access to the patched VM's counters, and turning them into cycles.
 
 use pdsim_core::Calibration;
+use std::collections::HashMap;
 use std::ffi::{c_char, c_int, CStr};
 
 /// Raw Lua state pointer type.
@@ -11,6 +12,8 @@ extern "C" {
     fn pdsim_opname(op: c_int) -> *const c_char;
     fn pdsim_counters(l: *mut LuaState, ops: *mut u64, mem: *mut u64);
     fn pdsim_native_instructions(l: *mut LuaState) -> u64;
+    fn pdsim_num_cfunc_slots() -> c_int;
+    fn pdsim_cfunc_counters(l: *mut LuaState, funcs: *mut usize, calls: *mut u64);
 }
 
 /// Instructions executed by API-in-Lua chunks (named `=[pdsim]...`), which
@@ -53,6 +56,8 @@ pub struct Counters {
     pub gc_work: u64,
     /// C functions (standard library and others) called by game code.
     pub c_calls: u64,
+    /// Those calls per C function, by slot (see [`cfunc_slots`]).
+    pub cfunc_calls: Vec<u64>,
 }
 
 impl Counters {
@@ -65,12 +70,17 @@ impl Counters {
         let mut ops = vec![0u64; n];
         let mut mem = [0u64; 4];
         pdsim_counters(l, ops.as_mut_ptr(), mem.as_mut_ptr());
+        let slots = pdsim_num_cfunc_slots() as usize;
+        let mut funcs = vec![0usize; slots];
+        let mut cfunc_calls = vec![0u64; slots];
+        pdsim_cfunc_counters(l, funcs.as_mut_ptr(), cfunc_calls.as_mut_ptr());
         Counters {
             ops,
             alloced: mem[0],
             freed: mem[1],
             gc_work: mem[2],
             c_calls: mem[3],
+            cfunc_calls,
         }
     }
 
@@ -82,6 +92,12 @@ impl Counters {
             freed: self.freed - earlier.freed,
             gc_work: self.gc_work - earlier.gc_work,
             c_calls: self.c_calls - earlier.c_calls,
+            cfunc_calls: self
+                .cfunc_calls
+                .iter()
+                .zip(&earlier.cfunc_calls)
+                .map(|(a, b)| a - b)
+                .collect(),
         }
     }
 
@@ -89,6 +105,70 @@ impl Counters {
     pub fn instructions(&self) -> u64 {
         self.ops.iter().sum()
     }
+}
+
+/// The C function in each counter slot (null for unused slots). A slot keeps
+/// its function for the life of the state.
+///
+/// # Safety
+/// `l` must be a live Lua state created by this crate's Lua library.
+pub unsafe fn cfunc_slots(l: *mut LuaState) -> Vec<usize> {
+    let slots = pdsim_num_cfunc_slots() as usize;
+    let mut funcs = vec![0usize; slots];
+    let mut calls = vec![0u64; slots];
+    pdsim_cfunc_counters(l, funcs.as_mut_ptr(), calls.as_mut_ptr());
+    funcs
+}
+
+/// Names of the standard library's C functions, keyed by function pointer:
+/// globals (`next`, `select`, ...), library functions (`math.sin`, ...) and
+/// the iterator `ipairs` returns (`ipairs.iter`). Pointers shared by several
+/// names (such as mlua's trampoline) are left out.
+pub fn cfunc_names(lua: &mlua::Lua) -> HashMap<usize, String> {
+    use mlua::ffi::*;
+    const LIBS: &[&str] = &["math", "string", "table", "utf8", "os", "coroutine", "io"];
+    let mut seen: HashMap<usize, Option<String>> = HashMap::new();
+    let mut add = |f: Option<lua_CFunction>, name: String| {
+        if let Some(f) = f {
+            seen.entry(f as usize)
+                .and_modify(|v| *v = None)
+                .or_insert(Some(name));
+        }
+    };
+    unsafe {
+        lua.exec_raw::<()>((), |l| {
+            // Calls `add` for each C function in the table on top of the stack.
+            let scan = |l: *mut lua_State, prefix: &str, add: &mut dyn FnMut(Option<lua_CFunction>, String)| {
+                lua_pushnil(l);
+                while lua_next(l, -2) != 0 {
+                    if lua_type(l, -2) == LUA_TSTRING && lua_iscfunction(l, -1) != 0 {
+                        let k = CStr::from_ptr(lua_tostring(l, -2)).to_string_lossy();
+                        add(lua_tocfunction(l, -1), format!("{prefix}{k}"));
+                    }
+                    lua_pop(l, 1);
+                }
+            };
+            lua_pushglobaltable(l);
+            scan(l, "", &mut add);
+            lua_pop(l, 1);
+            for lib in LIBS {
+                let c = std::ffi::CString::new(*lib).unwrap();
+                if lua_getglobal(l, c.as_ptr()) == LUA_TTABLE {
+                    scan(l, &format!("{lib}."), &mut add);
+                }
+                lua_pop(l, 1);
+            }
+            if lua_getglobal(l, c"ipairs".as_ptr()) == LUA_TFUNCTION {
+                lua_createtable(l, 0, 0);
+                if lua_pcall(l, 1, 1, 0) == LUA_OK {
+                    add(lua_tocfunction(l, -1), "ipairs.iter".into());
+                }
+            }
+            lua_pop(l, 1);
+        })
+        .expect("exec_raw");
+    }
+    seen.into_iter().filter_map(|(k, v)| Some((k, v?))).collect()
 }
 
 /// Per-opcode costs resolved from a calibration, indexed by opcode.
@@ -230,6 +310,33 @@ mod tests {
         let before = unsafe { Counters::read(l) };
         f.call::<()>(()).unwrap();
         assert_eq!(unsafe { Counters::read(l) }.since(&before).c_calls, 0);
+    }
+
+    #[test]
+    fn c_function_calls_are_counted_per_function() {
+        let lua = mlua::Lua::new();
+        let l = raw_state(&lua);
+        let names = cfunc_names(&lua);
+        assert!(names.values().any(|n| n == "math.sin"));
+        assert!(names.values().any(|n| n == "next"));
+        assert!(names.values().any(|n| n == "ipairs.iter"));
+        let before = unsafe { Counters::read(l) };
+        lua.load("for i = 1, 7 do math.sin(i) end for i = 1, 3 do math.abs(i) end")
+            .exec()
+            .unwrap();
+        let d = unsafe { Counters::read(l) }.since(&before);
+        let funcs = unsafe { cfunc_slots(l) };
+        let calls = |name: &str| -> u64 {
+            funcs
+                .iter()
+                .zip(&d.cfunc_calls)
+                .filter(|(f, _)| names.get(f).map(|n| n == name).unwrap_or(false))
+                .map(|(_, n)| n)
+                .sum()
+        };
+        assert_eq!(calls("math.sin"), 7);
+        assert_eq!(calls("math.abs"), 3);
+        assert_eq!(d.cfunc_calls.iter().sum::<u64>(), d.c_calls);
     }
 
     #[test]

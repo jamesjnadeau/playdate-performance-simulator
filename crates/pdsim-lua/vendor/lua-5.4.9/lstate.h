@@ -144,6 +144,9 @@ struct lua_longjmp;  /* defined in ldo.c */
 /* pdsim: size of the opcode counter table (>= NUM_OPCODES) */
 #define PDSIM_MAXOPS	128
 
+/* pdsim: slots in the per-C-function call counter table (a power of 2) */
+#define PDSIM_CFUNCS	256
+
 /*
 ** pdsim: functions from chunks named "=[pdsim]..." implement parts of the
 ** Playdate API in Lua. Their instructions go to a separate histogram, and
@@ -152,6 +155,9 @@ struct lua_longjmp;  /* defined in ldo.c */
 */
 #define pdsim_isnative(p) ((p)->source != NULL && \
   memcmp(getstr((p)->source), "=[pdsim]", 8) == 0)
+
+/* pdsim: counts a call by game code to the C function 'f' (pdsim.c) */
+LUAI_FUNC void pdsim_countcfunc (lua_State *L, lua_CFunction f);
 
 
 #define BASIC_STACK_SIZE        (2*LUA_MINSTACK)
@@ -286,6 +292,8 @@ typedef struct global_State {
   unsigned long long pdsim_freed;  /* bytes freed */
   unsigned long long pdsim_gcwork;  /* units of collector work */
   unsigned long long pdsim_ccalls;  /* C functions called by game code */
+  lua_CFunction pdsim_cfunc[PDSIM_CFUNCS];  /* ... which ones (hashed) */
+  unsigned long long pdsim_cfunc_calls[PDSIM_CFUNCS];  /* ... how often */
   lu_byte genmajormul;  /* control for major generational collections */
   lu_byte gcstp;  /* control whether GC is running */
   lu_byte gcemergency;  /* true if this is an emergency collection */

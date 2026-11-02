@@ -36,7 +36,7 @@ struct Args {
     #[arg(long, default_value = "rev-a")]
     device: String,
     /// Strength of the pull toward the starting profile.
-    #[arg(long, default_value_t = 1e-3)]
+    #[arg(long, default_value_t = 1e-6)]
     prior: f64,
     /// Write the per-benchmark report here (JSON).
     #[arg(long)]

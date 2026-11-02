@@ -27,13 +27,15 @@
    if (l_unlikely(trap))
 --- a/lstate.c
 +++ b/lstate.c
-@@ -411,6 +411,9 @@
+@@ -411,6 +411,11 @@
    g->gcstepsize = LUAI_GCSTEPSIZE;
    setgcparam(g->genmajormul, LUAI_GENMAJORMUL);
    g->genminormul = LUAI_GENMINORMUL;
 +  memset(g->pdsim_opcount, 0, sizeof(g->pdsim_opcount));  /* pdsim */
 +  memset(g->pdsim_native_opcount, 0, sizeof(g->pdsim_native_opcount));
 +  g->pdsim_alloced = g->pdsim_freed = g->pdsim_gcwork = g->pdsim_ccalls = 0;
++  memset(g->pdsim_cfunc, 0, sizeof(g->pdsim_cfunc));
++  memset(g->pdsim_cfunc_calls, 0, sizeof(g->pdsim_cfunc_calls));
    for (i=0; i < LUA_NUMTAGS; i++) g->mt[i] = NULL;
    if (luaD_rawrunprotected(L, f_luaopen, NULL) != LUA_OK) {
      /* memory allocation error: free partial state */
@@ -76,12 +78,15 @@
  
 --- a/lstate.h
 +++ b/lstate.h
-@@ -141,6 +141,18 @@
+@@ -141,6 +141,24 @@
  */
  #define EXTRA_STACK   5
  
 +/* pdsim: size of the opcode counter table (>= NUM_OPCODES) */
 +#define PDSIM_MAXOPS	128
++
++/* pdsim: slots in the per-C-function call counter table (a power of 2) */
++#define PDSIM_CFUNCS	256
 +
 +/*
 +** pdsim: functions from chunks named "=[pdsim]..." implement parts of the
@@ -92,10 +97,13 @@
 +#define pdsim_isnative(p) ((p)->source != NULL && \
 +  memcmp(getstr((p)->source), "=[pdsim]", 8) == 0)
 +
++/* pdsim: counts a call by game code to the C function 'f' (pdsim.c) */
++LUAI_FUNC void pdsim_countcfunc (lua_State *L, lua_CFunction f);
++
  
  #define BASIC_STACK_SIZE        (2*LUA_MINSTACK)
  
-@@ -267,6 +279,13 @@
+@@ -267,6 +285,15 @@
    lu_byte gckind;  /* kind of GC running */
    lu_byte gcstopem;  /* stops emergency collections */
    lu_byte genminormul;  /* control for minor generational collections */
@@ -106,6 +114,8 @@
 +  unsigned long long pdsim_freed;  /* bytes freed */
 +  unsigned long long pdsim_gcwork;  /* units of collector work */
 +  unsigned long long pdsim_ccalls;  /* C functions called by game code */
++  lua_CFunction pdsim_cfunc[PDSIM_CFUNCS];  /* ... which ones (hashed) */
++  unsigned long long pdsim_cfunc_calls[PDSIM_CFUNCS];  /* ... how often */
    lu_byte genmajormul;  /* control for major generational collections */
    lu_byte gcstp;  /* control whether GC is running */
    lu_byte gcemergency;  /* true if this is an emergency collection */
@@ -116,7 +126,7 @@
    CallInfo *ci;
    checkstackGCp(L, LUA_MINSTACK, func);  /* ensure minimum stack size */
 +  if (!(isLua(L->ci) && pdsim_isnative(ci_func(L->ci)->p)))
-+    G(L)->pdsim_ccalls++;  /* pdsim: a C function called by game code */
++    pdsim_countcfunc(L, f);  /* pdsim: a C function called by game code */
    L->ci = ci = prepCallInfo(L, func, nresults, CIST_C,
                                 L->top.p + LUA_MINSTACK);
    lua_assert(ci->top.p <= L->stack_last.p);

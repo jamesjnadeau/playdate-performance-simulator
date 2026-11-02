@@ -113,7 +113,7 @@ function playdate.update()
 			done = true
 			playdate.datastore.write({version = 1, bench = "lua", scale = SCALE, repeats = REPEATS, results = results}, "results")
 			gfx.clear()
-			gfx.drawTextInRect("Done. Copy Data/" .. playdate.metadata.bundleID .. "/results.json\nfrom the device (Data Disk mode).", 10, 10, 380, 200)
+			gfx.drawText("Done. Copy Data/" .. playdate.metadata.bundleID .. "/results.json\nfrom the device (Data Disk mode).", 10, 10)
 		end
 		return
 	end

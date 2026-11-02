@@ -414,6 +414,8 @@ LUA_API lua_State *lua_newstate (lua_Alloc f, void *ud) {
   memset(g->pdsim_opcount, 0, sizeof(g->pdsim_opcount));  /* pdsim */
   memset(g->pdsim_native_opcount, 0, sizeof(g->pdsim_native_opcount));
   g->pdsim_alloced = g->pdsim_freed = g->pdsim_gcwork = g->pdsim_ccalls = 0;
+  memset(g->pdsim_cfunc, 0, sizeof(g->pdsim_cfunc));
+  memset(g->pdsim_cfunc_calls, 0, sizeof(g->pdsim_cfunc_calls));
   for (i=0; i < LUA_NUMTAGS; i++) g->mt[i] = NULL;
   if (luaD_rawrunprotected(L, f_luaopen, NULL) != LUA_OK) {
     /* memory allocation error: free partial state */

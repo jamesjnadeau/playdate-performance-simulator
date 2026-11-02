@@ -121,11 +121,7 @@ pub fn run_as_device(
     repeats: u32,
     sdk: Option<std::path::PathBuf>,
 ) -> anyhow::Result<DeviceResults> {
-    let data = std::env::temp_dir().join(format!(
-        "pdsim-dry-{}-{}",
-        std::process::id(),
-        game.display().to_string().len()
-    ));
+    let data = temp_data_dir("dry");
     let _ = std::fs::remove_dir_all(&data);
     std::fs::create_dir_all(&data)?;
     std::fs::write(
@@ -156,6 +152,8 @@ pub fn run_as_device(
 pub enum Param {
     LuaOp(String),
     LuaCCall,
+    /// Extra cost of one C function (`math.sin`, ...).
+    LuaCFunc(String),
     LuaAlloc,
     LuaFree,
     LuaGcWork,
@@ -171,6 +169,9 @@ pub enum Param {
 pub fn param_of(feature: &str) -> Option<Param> {
     if let Some(op) = feature.strip_prefix("lua.op.") {
         return Some(Param::LuaOp(op.to_string()));
+    }
+    if let Some(f) = feature.strip_prefix("lua.cfunc.") {
+        return Some(Param::LuaCFunc(f.to_string()));
     }
     if let Some(rest) = feature.strip_prefix("api.") {
         let (name, field) = rest.rsplit_once('.')?;
@@ -218,6 +219,7 @@ pub fn get(cal: &Calibration, p: &Param) -> f64 {
     match p {
         Param::LuaOp(op) => cal.lua_opcode(op),
         Param::LuaCCall => cal.lua.c_function_call,
+        Param::LuaCFunc(f) => cal.lua.c_functions.get(f).copied().unwrap_or(0.0),
         Param::LuaAlloc => cal.lua.gc_per_alloc_byte,
         Param::LuaFree => cal.lua.gc_per_free_byte,
         Param::LuaGcWork => cal.lua.gc_per_work_unit,
@@ -237,6 +239,9 @@ pub fn set(cal: &mut Calibration, p: &Param, v: f64) {
             cal.lua.opcodes.insert(op.clone(), v);
         }
         Param::LuaCCall => cal.lua.c_function_call = v,
+        Param::LuaCFunc(f) => {
+            cal.lua.c_functions.insert(f.clone(), v);
+        }
         Param::LuaAlloc => cal.lua.gc_per_alloc_byte = v,
         Param::LuaFree => cal.lua.gc_per_free_byte = v,
         Param::LuaGcWork => cal.lua.gc_per_work_unit = v,
@@ -277,7 +282,7 @@ pub struct FitOptions {
 
 impl Default for FitOptions {
     fn default() -> Self {
-        FitOptions { prior: 1e-3 }
+        FitOptions { prior: 1e-6 }
     }
 }
 
@@ -288,6 +293,8 @@ pub struct FitRow {
     pub measured_ms: f64,
     pub before_ms: f64,
     pub after_ms: f64,
+    /// The work the simulator recorded for this run.
+    pub features: Sample,
 }
 
 /// Fit result.
@@ -329,6 +336,59 @@ fn solve(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
     Some(x)
 }
 
+/// Minimizes `z·A·z/2 - b·z` subject to `z >= 0` (A symmetric positive
+/// definite): the Lawson-Hanson active-set method on the normal equations.
+fn nnls(a: &[Vec<f64>], b: &[f64]) -> Vec<f64> {
+    let n = b.len();
+    let tol = 1e-12;
+    let mut z = vec![0.0; n];
+    let mut free = vec![false; n];
+    // Solves the equations restricted to the free set; the rest stay zero.
+    let solve_free = |free: &[bool]| -> Vec<f64> {
+        let idx: Vec<usize> = (0..n).filter(|i| free[*i]).collect();
+        let sub = idx.iter().map(|&i| idx.iter().map(|&j| a[i][j]).collect()).collect();
+        let rhs = idx.iter().map(|&i| b[i]).collect();
+        let mut s = vec![0.0; n];
+        if let Some(sol) = solve(sub, rhs) {
+            for (k, &i) in idx.iter().enumerate() {
+                s[i] = sol[k];
+            }
+        }
+        s
+    };
+    for _ in 0..3 * n {
+        // The most promising bound cost: steepest descent among those at zero.
+        let grad: Vec<f64> = (0..n).map(|i| b[i] - (0..n).map(|j| a[i][j] * z[j]).sum::<f64>()).collect();
+        let Some(k) = (0..n)
+            .filter(|i| !free[*i] && grad[*i] > tol)
+            .max_by(|i, j| grad[*i].partial_cmp(&grad[*j]).unwrap())
+        else {
+            break;
+        };
+        free[k] = true;
+        for _ in 0..n {
+            let s = solve_free(&free);
+            if (0..n).all(|i| !free[i] || s[i] > 0.0) {
+                z = s;
+                break;
+            }
+            // Step toward s until the first free cost hits zero, then bind it.
+            let alpha = (0..n)
+                .filter(|i| free[*i] && s[*i] <= 0.0)
+                .map(|i| z[i] / (z[i] - s[i]))
+                .fold(1.0, f64::min);
+            for i in 0..n {
+                z[i] += alpha * (s[i] - z[i]);
+                if free[i] && z[i] <= tol {
+                    free[i] = false;
+                    z[i] = 0.0;
+                }
+            }
+        }
+    }
+    z
+}
+
 /// Fits `base` to `(sample, measured seconds, name)` triples.
 pub fn fit(base: &Calibration, data: &[(Sample, f64, String)], opts: FitOptions) -> (Calibration, FitReport) {
     let hz = base.cpu_hz as f64;
@@ -354,45 +414,37 @@ pub fn fit(base: &Calibration, data: &[(Sample, f64, String)], opts: FitOptions)
             (x, t * hz)
         })
         .collect();
-    let mut fixed_zero = vec![false; params.len()];
-    let mut x = p0.clone();
-    for _ in 0..20 {
-        let free: Vec<usize> = (0..params.len()).filter(|i| !fixed_zero[*i]).collect();
-        let n = free.len();
-        let mut a = vec![vec![0.0; n]; n];
-        let mut b = vec![0.0; n];
-        for (xr, y) in &rows {
-            let w = 1.0 / (y * y);
-            for (ii, &i) in free.iter().enumerate() {
-                if xr[i] == 0.0 {
-                    continue;
-                }
-                b[ii] += w * xr[i] * y;
-                for (jj, &j) in free.iter().enumerate() {
-                    a[ii][jj] += w * xr[i] * xr[j];
-                }
+    // Solve in relative units (each cost divided by its prior), so costs that
+    // differ by many orders of magnitude (per pixel vs per call) keep the
+    // normal equations well conditioned. Per-function extras start at zero,
+    // so they take the scale of the average C call they adjust.
+    let n = params.len();
+    let scale: Vec<f64> = params
+        .iter()
+        .zip(&p0)
+        .map(|(p, v)| match p {
+            Param::LuaCFunc(_) => v.abs().max(get(base, &Param::LuaCCall).abs()),
+            _ => v.abs(),
+        })
+        .map(|v| v.max(0.01))
+        .collect();
+    let mut a = vec![vec![0.0; n]; n];
+    let mut b = vec![0.0; n];
+    for (xr, y) in &rows {
+        let w = 1.0 / (y * y);
+        for i in (0..n).filter(|i| xr[*i] != 0.0) {
+            let xi = xr[i] * scale[i];
+            b[i] += w * xi * y;
+            for j in (0..n).filter(|j| xr[*j] != 0.0) {
+                a[i][j] += w * xi * xr[j] * scale[j];
             }
-        }
-        for (ii, &i) in free.iter().enumerate() {
-            let s = p0[i].abs().max(0.01);
-            let d = opts.prior / (s * s);
-            a[ii][ii] += d;
-            b[ii] += d * p0[i];
-        }
-        let Some(sol) = solve(a, b) else { break };
-        let mut negative = false;
-        for (ii, &i) in free.iter().enumerate() {
-            x[i] = sol[ii];
-            if x[i] < 0.0 {
-                fixed_zero[i] = true;
-                x[i] = 0.0;
-                negative = true;
-            }
-        }
-        if !negative {
-            break;
         }
     }
+    for i in 0..n {
+        a[i][i] += opts.prior;
+        b[i] += opts.prior * p0[i] / scale[i];
+    }
+    let x: Vec<f64> = nnls(&a, &b).iter().zip(&scale).map(|(z, s)| z * s).collect();
     let mut out = base.clone();
     for (p, v) in params.iter().zip(&x) {
         set(&mut out, p, *v);
@@ -405,6 +457,7 @@ pub fn fit(base: &Calibration, data: &[(Sample, f64, String)], opts: FitOptions)
             measured_ms: t * 1000.0,
             before_ms: predict(base, s) / hz * 1000.0,
             after_ms: predict(&out, s) / hz * 1000.0,
+            features: s.clone(),
         })
         .collect();
     let err = |f: &dyn Fn(&FitRow) -> f64| {

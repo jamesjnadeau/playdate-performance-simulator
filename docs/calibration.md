@@ -20,7 +20,8 @@ The two bench projects time many small benchmarks with
 
 `fit-calibration` then runs the *same* projects in the simulator with
 feature recording on. At each `getElapsedTime` the simulator records exactly
-what ran since the matching reset: the Lua opcode histogram, C library calls,
+what ran since the matching reset: the Lua opcode histogram, C library calls
+(in total and per function, so `math.sin` can cost more than `math.abs`),
 bytes allocated and freed, GC work, every API call with the pixels/rows/items
 it touched, and the ARM instruction classes executed. Each device timing is
 then one equation:
@@ -48,6 +49,15 @@ cannot tell apart keep their prior) and costs kept non-negative.
    - `Data/dev.pdsim.benchlua/results.json` → `lua-results.json`
    - `Data/dev.pdsim.benchc/results.json` → `c-results.json`
 
+   Then eject the disk so the Playdate leaves Data Disk mode. On Linux,
+   unmounting and powering the disk off (`udisksctl power-off`) is not
+   enough: the device only leaves Data Disk mode on a real eject, such as
+   the file manager's eject button or
+
+   ```bash
+   eject /dev/sda    # the Playdate's disk, not a partition
+   ```
+
 4. Fit:
 
    ```bash
@@ -57,7 +67,15 @@ cannot tell apart keep their prior) and costs kept non-negative.
    ```
 
    It prints each benchmark's device time and the model's prediction before
-   and after fitting, and the mean error.
+   and after fitting, and the mean error. `--prior` sets how strongly costs
+   are pulled toward the starting profile. The default (1e-6) is weak,
+   because the built-in estimates can be off by an order of magnitude.
+
+   A few benchmarks fit worse than the rest, and that is expected. The ARM
+   micro-benchmarks run for only a few milliseconds, and the Cortex-M7
+   dual-issues instructions, which a per-class cost cannot express. Some
+   Lua opcodes cost different amounts depending on context. Expect a mean
+   error of a few percent, with these benchmarks at 15–25%.
 
 5. Use the profile:
 

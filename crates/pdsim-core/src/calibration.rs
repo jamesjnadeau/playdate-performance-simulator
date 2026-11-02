@@ -78,6 +78,10 @@ pub struct LuaCosts {
     /// string.format, ...), on top of the CALL opcode.
     #[serde(default = "default_c_call")]
     pub c_function_call: f64,
+    /// Extra cost of particular C functions on top of `c_function_call`,
+    /// keyed by name (`math.sin`, `next`, `ipairs.iter`, ...).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub c_functions: BTreeMap<String, f64>,
 }
 
 fn default_c_call() -> f64 {

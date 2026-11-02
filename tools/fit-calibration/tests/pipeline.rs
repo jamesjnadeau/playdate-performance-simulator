@@ -17,6 +17,7 @@ fn truth() -> Calibration {
     t.lua.opcodes.insert("ADD".into(), 25.0);
     t.lua.opcodes.insert("GETFIELD".into(), 55.0);
     t.lua.c_function_call = 300.0;
+    t.lua.c_functions.insert("math.sin".into(), 900.0);
     let mut fr = t.api("graphics.fillRect");
     fr.per_pixel *= 2.0;
     fr.base *= 1.5;
@@ -101,4 +102,7 @@ fn fitting_recovers_a_perturbed_profile() {
         "ADD {}",
         fitted.lua_opcode("ADD")
     );
+    // A per-function cost separates from the average C call.
+    let sin = fitted.lua.c_function_call + fitted.lua.c_functions.get("math.sin").copied().unwrap_or(0.0);
+    assert!(rel(sin, 1200.0) < 0.1, "math.sin {sin}");
 }
