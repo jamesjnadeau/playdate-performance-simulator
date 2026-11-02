@@ -22,3 +22,6 @@ What the patch adds, all to `global_State`:
 
 `pdsim.c` exports `pdsim_counters`, `pdsim_native_instructions`,
 `pdsim_num_opcodes` and `pdsim_opname`.
+
+`build.rs` also defines `luai_makeseed` to a constant so string hashing (and
+so table iteration order) is the same in every run.

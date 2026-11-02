@@ -9,6 +9,11 @@ local floor = math.floor
 
 playdate = playdate or {}
 local P = playdate
+
+-- Deterministic runs: Lua seeds math.random from the host clock. Games that
+-- seed it themselves (e.g. from getSecondsSinceEpoch, which is device time
+-- here) are deterministic too.
+math.randomseed(0x5eed)
 local geom = P.geometry
 
 -- constants ----------------------------------------------------------------

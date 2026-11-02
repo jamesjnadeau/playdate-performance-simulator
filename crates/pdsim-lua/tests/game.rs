@@ -397,3 +397,27 @@ fn api_coverage_against_sdk_stub() {
     }
     assert!(pct >= 90.0, "coverage {pct:.1}%");
 }
+
+#[test]
+fn runs_are_deterministic() {
+    // Same game, same input: identical cycles every frame (needed for CI
+    // regression checks). Uses table iteration order and math.random.
+    let src = r#"
+        local t = {}
+        for i = 1, 200 do t["key" .. i] = i end
+        function playdate.update()
+            local s = 0
+            for k, v in pairs(t) do
+                if v % 7 == 0 then break end
+                s = s + #k
+            end
+            for i = 1, math.random(100, 2000) do s = s + i end
+        end
+    "#;
+    let a = TempGame::new("det-a", src);
+    let b = TempGame::new("det-b", src);
+    let (mut ga, mut gb) = (a.load(), b.load());
+    for _ in 0..5 {
+        assert_eq!(ga.frame(None).unwrap().cycles, gb.frame(None).unwrap().cycles);
+    }
+}

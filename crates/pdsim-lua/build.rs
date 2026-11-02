@@ -8,6 +8,9 @@ fn main() {
     let dir = PathBuf::from("vendor/lua-5.4.9");
     let mut b = cc::Build::new();
     b.include(&dir).warnings(false).define("LUA_COMPAT_5_3", None);
+    // A fixed string-hash seed (Lua randomizes it per state), so table
+    // iteration order, and therefore cycle counts, are the same every run.
+    b.define("luai_makeseed(L)", Some("((unsigned int)0x5eed)"));
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     match target_os.as_str() {
         "linux" => {
