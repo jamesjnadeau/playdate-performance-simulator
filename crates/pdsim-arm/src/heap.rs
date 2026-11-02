@@ -16,6 +16,12 @@ pub struct Heap {
 
 const ALIGN: u32 = 8;
 
+/// Bytes in front of every block. The device's allocator is newlib's, and
+/// newlib's `calloc` (which games link) reads the chunk size from the word
+/// just before the pointer to know how much to clear, so that word must be
+/// mapped and hold a size. The header keeps the pointer 8-byte aligned.
+pub const HEADER: u32 = 8;
+
 impl Heap {
     pub fn new(base: u32, size: u32) -> Heap {
         let mut free = BTreeMap::new();
@@ -30,18 +36,28 @@ impl Heap {
         }
     }
 
-    /// Allocates `n` bytes; `None` when out of memory.
+    /// Allocates `n` bytes; `None` when out of memory. The returned pointer
+    /// is preceded by [`HEADER`] bytes; the caller writes
+    /// [`Heap::chunk_word`] into the word before it.
     pub fn alloc(&mut self, n: u32) -> Option<u32> {
         let n = n.max(1).div_ceil(ALIGN) * ALIGN;
-        let (&addr, &len) = self.free.iter().find(|(_, l)| **l >= n)?;
+        let total = n + HEADER;
+        let (&addr, &len) = self.free.iter().find(|(_, l)| **l >= total)?;
         self.free.remove(&addr);
-        if len > n {
-            self.free.insert(addr + n, len - n);
+        if len > total {
+            self.free.insert(addr + total, len - total);
         }
-        self.used.insert(addr, n);
+        let ptr = addr + HEADER;
+        self.used.insert(ptr, n);
         self.bytes_in_use += n as u64;
         self.peak = self.peak.max(self.bytes_in_use);
-        Some(addr)
+        Some(ptr)
+    }
+
+    /// The newlib-style chunk size word for the block at `ptr` (usable size
+    /// plus the word itself, with the "previous in use" bit set).
+    pub fn chunk_word(&self, ptr: u32) -> u32 {
+        self.used.get(&ptr).map_or(0, |n| (n + 4) | 1)
     }
 
     /// Size of the block at `addr`.
@@ -55,17 +71,18 @@ impl Heap {
             return false;
         };
         self.bytes_in_use -= n as u64;
-        let mut start = addr;
-        let mut len = n;
-        if let Some((&pa, &pl)) = self.free.range(..addr).next_back() {
-            if pa + pl == addr {
+        let block = addr - HEADER;
+        let mut start = block;
+        let mut len = n + HEADER;
+        if let Some((&pa, &pl)) = self.free.range(..block).next_back() {
+            if pa + pl == block {
                 self.free.remove(&pa);
                 start = pa;
                 len += pl;
             }
         }
-        if let Some(&nl) = self.free.get(&(addr + n)) {
-            self.free.remove(&(addr + n));
+        if let Some(&nl) = self.free.get(&(block + n + HEADER)) {
+            self.free.remove(&(block + n + HEADER));
             len += nl;
         }
         self.free.insert(start, len);
@@ -84,15 +101,16 @@ mod tests {
 
     #[test]
     fn alloc_free_coalesce() {
-        let mut h = Heap::new(0x1000, 64);
+        let mut h = Heap::new(0x1000, 96);
         let a = h.alloc(10).unwrap();
         let b = h.alloc(16).unwrap();
         let c = h.alloc(16).unwrap();
-        assert_eq!((a, b, c), (0x1000, 0x1010, 0x1020));
+        assert_eq!((a, b, c), (0x1008, 0x1020, 0x1038));
+        assert_eq!(h.chunk_word(a), (16 + 4) | 1);
         assert!(h.alloc(32).is_none());
         assert!(h.free(b));
         assert!(h.free(a));
-        assert_eq!(h.alloc(32), Some(0x1000), "freed neighbours merged");
+        assert_eq!(h.alloc(32), Some(0x1008), "freed neighbours merged");
         assert!(!h.free(0x5000));
         assert_eq!(h.bytes_in_use, 48);
     }

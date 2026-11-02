@@ -65,6 +65,8 @@ pub struct ArmState {
     pending: f64,
     // Shadow call stack (symbol indexes; u32::MAX = unknown).
     stack: Vec<u32>,
+    /// Calls beyond MAX_STACK_DEPTH, which are not tracked.
+    stack_overflow: u32,
     stack_id: usize,
     stack_ids: HashMap<Vec<u32>, usize>,
     stack_keys: Vec<Vec<u32>>,
@@ -90,6 +92,9 @@ pub struct ArmState {
     class_counts: [f64; 12],
     registers: f64,
 }
+
+/// Deepest shadow call stack kept; each distinct stack is interned in full.
+const MAX_STACK_DEPTH: usize = 128;
 
 impl ArmState {
     fn intern(&mut self) {
@@ -357,6 +362,8 @@ pub fn call_full(uc: &mut Unicorn<'_, ArmState>, f: u32, args: &[u32], fargs: &[
     let _ = uc.reg_write(RegisterARM::SP, sp_new as u64);
     let _ = uc.reg_write(RegisterARM::LR, (RETURN_ADDR | 1) as u64);
     let r = uc.emu_start((f | 1) as u64, RETURN_ADDR as u64, 0, 0);
+    // Describe a fault now: the registers are restored below.
+    let crash = r.err().map(|e| crash_message(uc, e));
     let ret = uc.reg_read(RegisterARM::R0).unwrap_or(0) as u32;
     for (r, v) in CALLEE_SAVED.iter().zip(saved) {
         let _ = uc.reg_write(*r, v);
@@ -372,7 +379,9 @@ pub fn call_full(uc: &mut Unicorn<'_, ArmState>, f: u32, args: &[u32], fargs: &[
     if let Some(e) = uc.get_data().error.clone() {
         return Err(e);
     }
-    r.map_err(|e| crash_message(uc, e))?;
+    if let Some(msg) = crash {
+        return Err(msg);
+    }
     Ok(ret)
 }
 
@@ -384,7 +393,13 @@ fn crash_message(uc: &Unicorn<'_, ArmState>, e: unicorn_engine::unicorn_const::u
         .symbol_at(pc)
         .map(|i| st.image.symbols[i].name.clone())
         .unwrap_or_else(|| "?".into());
-    format!("C game crashed: {e:?} at pc {pc:#010x} ({sym})")
+    let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0) as u32;
+    let lr_sym = st
+        .image
+        .symbol_at(lr & !1)
+        .map(|i| st.image.symbols[i].name.clone())
+        .unwrap_or_else(|| "?".into());
+    format!("C game crashed: {e:?} at pc {pc:#010x} ({sym}), lr {lr:#010x} ({lr_sym})")
 }
 
 /// A C game running in the emulator.
@@ -476,6 +491,7 @@ impl ArmGame {
             blocks: HashMap::new(),
             pending: 0.0,
             stack: vec![],
+            stack_overflow: 0,
             stack_id: 0,
             stack_ids: HashMap::new(),
             stack_keys: vec![],
@@ -540,10 +556,12 @@ impl ArmGame {
             let st = uc.get_data_mut();
             let (info, sym) = st.blocks[&a];
             match st.last_exit {
+                Exit::Call if st.stack.len() >= MAX_STACK_DEPTH => st.stack_overflow += 1,
                 Exit::Call => {
                     st.stack.push(sym);
                     st.intern();
                 }
+                Exit::Return if st.stack_overflow > 0 => st.stack_overflow -= 1,
                 Exit::Return => {
                     st.stack.pop();
                     if st.stack.last() != Some(&sym) {

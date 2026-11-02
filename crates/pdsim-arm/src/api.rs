@@ -120,8 +120,15 @@ fn put_str(uc: &mut Uc, s: &str) -> u32 {
     a
 }
 
+/// Allocates from the game heap and writes the chunk-size word that newlib's
+/// `calloc` reads from in front of the pointer.
 fn heap_alloc(uc: &mut Uc, n: u32) -> u32 {
-    uc.get_data_mut().heap.alloc(n).unwrap_or(0)
+    let Some(p) = uc.get_data_mut().heap.alloc(n) else {
+        return 0;
+    };
+    let word = uc.get_data().heap.chunk_word(p);
+    uc.w32(p - 4, word);
+    p
 }
 
 /// Writes an array of u32 to the heap; returns its address and writes the
@@ -291,9 +298,10 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
                 return Some(Ret::I(0));
             }
             let old = if ptr != 0 { st.heap.size_of(ptr) } else { None };
-            let Some(new) = st.heap.alloc(size) else {
+            let new = heap_alloc(uc, size);
+            if new == 0 {
                 return Some(Ret::I(0));
-            };
+            }
             if let Some(n) = old {
                 let data = uc.bytes(ptr, n.min(size) as usize);
                 uc.write(new, &data);
