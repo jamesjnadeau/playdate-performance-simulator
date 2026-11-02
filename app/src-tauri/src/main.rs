@@ -24,7 +24,10 @@ fn main() {
                 let _ = handle.emit("pdsim", ev);
             });
             if let Some(game) = std::env::args().nth(1) {
-                session.send(Command::Load { path: game, calibration: None });
+                session.send(Command::Load {
+                    path: game,
+                    calibration: None,
+                });
             }
             app.manage(AppSession(Mutex::new(session)));
             Ok(())

@@ -1,0 +1,6 @@
+name=C Stress
+author=Playdate Performance Simulator
+description=A C sample with known hot paths for validating the simulator
+bundleID=dev.pdsim.cstress
+version=1.0
+buildNumber=1

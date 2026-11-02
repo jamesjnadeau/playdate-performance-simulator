@@ -24,25 +24,51 @@ use std::time::{Duration, Instant};
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum Command {
     /// Load (or reload) a game.
-    Load { path: String, calibration: Option<String> },
+    Load {
+        path: String,
+        calibration: Option<String>,
+    },
     Play,
     Pause,
     /// Run exactly one frame (pauses first).
     Step,
     /// "device" or "turbo".
-    SetMode { mode: String },
+    SetMode {
+        mode: String,
+    },
     /// Device-speed multiplier (1.0 = real device speed).
-    SetSpeed { speed: f64 },
-    Button { name: String, down: bool },
-    Crank { delta: f32 },
-    CrankTo { angle: f32 },
-    Dock { docked: bool },
-    Accel { x: f32, y: f32, z: f32 },
-    BreakOnOverBudget { on: bool },
+    SetSpeed {
+        speed: f64,
+    },
+    Button {
+        name: String,
+        down: bool,
+    },
+    Crank {
+        delta: f32,
+    },
+    CrankTo {
+        angle: f32,
+    },
+    Dock {
+        docked: bool,
+    },
+    Accel {
+        x: f32,
+        y: f32,
+        z: f32,
+    },
+    BreakOnOverBudget {
+        on: bool,
+    },
     /// Write a Chrome trace of the recorded frames.
-    ExportTrace { path: Option<String> },
+    ExportTrace {
+        path: Option<String>,
+    },
     /// Ask for the flame data of a recorded frame (latest if `None`).
-    Flame { index: Option<u64> },
+    Flame {
+        index: Option<u64>,
+    },
     /// A UI connected: resend the current state.
     Hello,
     Quit,
@@ -70,7 +96,10 @@ impl Session {
             .name("pdsim-session".into())
             .spawn(move || Runner::new(Box::new(emit)).run(rx))
             .expect("spawn session thread");
-        Session { tx, thread: Some(thread) }
+        Session {
+            tx,
+            thread: Some(thread),
+        }
     }
 
     /// Sends a command.
@@ -182,7 +211,10 @@ impl Runner {
 
     fn reanchor(&mut self) {
         self.anchor_wall = Instant::now();
-        self.anchor_device_ms = self.game.as_ref().map_or(0.0, |g| g.device().borrow().scheduler.now_ms());
+        self.anchor_device_ms = self
+            .game
+            .as_ref()
+            .map_or(0.0, |g| g.device().borrow().scheduler.now_ms());
     }
 
     fn handle(&mut self, c: Command) {
@@ -275,7 +307,10 @@ impl Runner {
             },
             None => Calibration::default_estimates(),
         };
-        let cfg = pdsim_runner::RunConfig { calibration: cal.clone(), ..Default::default() };
+        let cfg = pdsim_runner::RunConfig {
+            calibration: cal.clone(),
+            ..Default::default()
+        };
         match pdsim_runner::load(std::path::Path::new(&path), &cfg) {
             Ok(g) => {
                 let ev = json!({
@@ -360,7 +395,8 @@ impl Runner {
         }
         let Some(g) = &self.game else { return };
         let device_ms = g.device().borrow().scheduler.now_ms();
-        let target = self.anchor_wall + Duration::from_secs_f64(((device_ms - self.anchor_device_ms) / self.speed / 1000.0).max(0.0));
+        let target = self.anchor_wall
+            + Duration::from_secs_f64(((device_ms - self.anchor_device_ms) / self.speed / 1000.0).max(0.0));
         let now = Instant::now();
         if target > now {
             // Sleep, but wake for commands (input should not wait a frame).
@@ -434,13 +470,23 @@ impl Runner {
     fn export_trace(&mut self, path: Option<String>) {
         let frames: Vec<FrameStats> = self.history.iter().cloned().collect();
         let t = trace::chrome_trace(&frames);
-        let path = path.filter(|p| !p.is_empty()).map(PathBuf::from).unwrap_or_else(|| {
-            let base = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
-            let n = self.game.as_ref().map_or(0, |g| g.device().borrow().scheduler.frame_index());
-            base.join(format!("pdsim-trace-{n}.json"))
-        });
+        let path = path
+            .filter(|p| !p.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                let base = std::env::var_os("HOME")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(std::env::temp_dir);
+                let n = self
+                    .game
+                    .as_ref()
+                    .map_or(0, |g| g.device().borrow().scheduler.frame_index());
+                base.join(format!("pdsim-trace-{n}.json"))
+            });
         match std::fs::write(&path, t.to_string()) {
-            Ok(()) => (self.emit)(json!({"type": "traceExported", "path": path.display().to_string(), "frames": frames.len()})),
+            Ok(()) => (self.emit)(
+                json!({"type": "traceExported", "path": path.display().to_string(), "frames": frames.len()}),
+            ),
             Err(e) => self.error(format!("writing {}: {e}", path.display())),
         }
     }
@@ -471,7 +517,10 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     fn example() -> String {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/lua-stress").display().to_string()
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/lua-stress")
+            .display()
+            .to_string()
     }
 
     fn wait_for(events: &Arc<Mutex<Vec<Value>>>, ty: &str, timeout: Duration) -> Option<Value> {
@@ -490,21 +539,41 @@ mod tests {
         let events = Arc::new(Mutex::new(vec![]));
         let ev = events.clone();
         let s = Session::spawn(move |v| ev.lock().unwrap().push(v));
-        s.send(Command::Load { path: example(), calibration: None });
-        assert!(wait_for(&events, "loaded", Duration::from_secs(20)).is_some(), "{:?}", events.lock().unwrap());
+        s.send(Command::Load {
+            path: example(),
+            calibration: None,
+        });
+        assert!(
+            wait_for(&events, "loaded", Duration::from_secs(20)).is_some(),
+            "{:?}",
+            events.lock().unwrap()
+        );
         std::thread::sleep(Duration::from_millis(500));
         s.send(Command::Pause);
         std::thread::sleep(Duration::from_millis(100));
-        let frames = events.lock().unwrap().iter().filter(|e| e["type"] == "frame").count();
+        let frames = events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| e["type"] == "frame")
+            .count();
         // ~15 frames at 30 fps in 0.5 s (allow slack for slow hosts).
-        assert!((5..=20).contains(&frames), "device-speed frames in 0.5 s: {frames}");
+        assert!(
+            (5..=20).contains(&frames),
+            "device-speed frames in 0.5 s: {frames}"
+        );
         events.lock().unwrap().clear();
         s.send(Command::SetMode { mode: "turbo".into() });
         s.send(Command::Play);
         std::thread::sleep(Duration::from_millis(500));
         s.send(Command::Pause);
         std::thread::sleep(Duration::from_millis(100));
-        let turbo = events.lock().unwrap().iter().filter(|e| e["type"] == "frame").count();
+        let turbo = events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| e["type"] == "frame")
+            .count();
         assert!(turbo > frames, "turbo {turbo} vs device {frames}");
         let stats = wait_for(&events, "stats", Duration::from_secs(1)).unwrap();
         assert!(stats["hotspots"].as_array().unwrap().len() > 1);
@@ -517,17 +586,26 @@ mod tests {
         let s = Session::spawn(move |v| ev.lock().unwrap().push(v));
         s.send(Command::BreakOnOverBudget { on: true });
         s.send(Command::SetMode { mode: "turbo".into() });
-        s.send(Command::Load { path: example(), calibration: None });
+        s.send(Command::Load {
+            path: example(),
+            calibration: None,
+        });
         let b = wait_for(&events, "break", Duration::from_secs(30));
         assert!(b.is_some(), "no break event");
         let flame = wait_for(&events, "flame", Duration::from_secs(1)).unwrap();
         assert_eq!(flame["index"], 59);
-        assert!(flame["folded"].as_object().unwrap().keys().any(|k| k.contains("spike")));
+        assert!(flame["folded"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .any(|k| k.contains("spike")));
         events.lock().unwrap().clear();
         s.send(Command::Step);
         let f = wait_for(&events, "frame", Duration::from_secs(5)).unwrap();
         assert_eq!(f["index"], 60);
-        let fb = base64::engine::general_purpose::STANDARD.decode(f["fb"].as_str().unwrap()).unwrap();
+        let fb = base64::engine::general_purpose::STANDARD
+            .decode(f["fb"].as_str().unwrap())
+            .unwrap();
         assert_eq!(fb.len(), 52 * 240);
     }
 }

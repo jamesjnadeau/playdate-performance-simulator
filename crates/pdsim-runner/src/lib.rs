@@ -112,15 +112,13 @@ pub fn load(path: &Path, cfg: &RunConfig) -> Result<Box<dyn Game>, GameError> {
     }
 }
 
-fn load_c(
-    _dev: pdsim_device::SharedDevice,
-    elf: &Path,
-    _cfg: &RunConfig,
-) -> Result<Box<dyn Game>, GameError> {
-    Err(GameError(format!(
-        "{}: C games are not supported yet",
-        elf.display()
-    )))
+fn load_c(dev: pdsim_device::SharedDevice, elf: &Path, cfg: &RunConfig) -> Result<Box<dyn Game>, GameError> {
+    Ok(Box::new(pdsim_arm::ArmGame::load(
+        dev,
+        elf,
+        cfg.sdk.as_deref(),
+        cfg.profile,
+    )?))
 }
 
 #[cfg(test)]

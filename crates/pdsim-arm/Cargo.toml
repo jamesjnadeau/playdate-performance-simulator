@@ -1,0 +1,15 @@
+[package]
+name = "pdsim-arm"
+description = "Runs Playdate C games (pdex.elf) in a Cortex-M7 emulator with block-level cycle costing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+pdsim-core = { path = "../pdsim-core" }
+pdsim-gfx = { path = "../pdsim-gfx" }
+pdsim-device = { path = "../pdsim-device" }
+unicorn-engine = "2.1"
+capstone = "0.14"
+goblin = { version = "0.10", default-features = false, features = ["std", "elf32", "elf64", "endian_fd"] }

@@ -10,3 +10,4 @@ repository.workspace = true
 pdsim-core = { path = "../pdsim-core" }
 pdsim-device = { path = "../pdsim-device" }
 pdsim-lua = { path = "../pdsim-lua" }
+pdsim-arm = { path = "../pdsim-arm" }

@@ -179,7 +179,8 @@ fn serve(game: Option<PathBuf>, port: u16) -> Result<()> {
     use std::sync::mpsc::channel;
     use std::time::Duration;
     use tungstenite::{Error as WsError, Message};
-    let listener = std::net::TcpListener::bind(("127.0.0.1", port)).with_context(|| format!("binding port {port}"))?;
+    let listener =
+        std::net::TcpListener::bind(("127.0.0.1", port)).with_context(|| format!("binding port {port}"))?;
     eprintln!("pdsim: serving on ws://127.0.0.1:{port} (open the app's dev server, `npm run dev` in app/)");
     for stream in listener.incoming() {
         let stream = stream?;
@@ -198,7 +199,10 @@ fn serve(game: Option<PathBuf>, port: u16) -> Result<()> {
             let _ = tx.send(v.to_string());
         });
         if let Some(g) = &game {
-            session.send(pdsim_session::Command::Load { path: g.display().to_string(), calibration: None });
+            session.send(pdsim_session::Command::Load {
+                path: g.display().to_string(),
+                calibration: None,
+            });
         }
         'conn: loop {
             match ws.read() {
@@ -212,7 +216,11 @@ fn serve(game: Option<PathBuf>, port: u16) -> Result<()> {
                 },
                 Ok(Message::Close(_)) => break,
                 Ok(_) => {}
-                Err(WsError::Io(e)) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
+                Err(WsError::Io(e))
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) => {}
                 Err(_) => break,
             }
             while let Ok(m) = rx.try_recv() {
