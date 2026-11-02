@@ -24,6 +24,14 @@ enum Cmd {
     Run(Box<RunArgs>),
     /// Print the built-in calibration profile as JSON.
     DefaultCalibration,
+    /// Serve a live session over WebSocket for the web UI (`app/`, `npm run dev`).
+    Serve {
+        /// Game to load when a UI connects.
+        game: Option<PathBuf>,
+        /// Port to listen on.
+        #[arg(long, default_value_t = 8765)]
+        port: u16,
+    },
 }
 
 #[derive(Parser)]
@@ -74,6 +82,7 @@ struct RunArgs {
 fn main() -> Result<()> {
     match Cli::parse().cmd {
         Cmd::Run(a) => run(*a),
+        Cmd::Serve { game, port } => serve(game, port),
         Cmd::DefaultCalibration => {
             println!("{}", Calibration::default_estimates().to_json());
             Ok(())
@@ -160,6 +169,59 @@ fn run(a: RunArgs) -> Result<()> {
         if report.avg_work_ms > m {
             bail!("average frame work {:.2} ms exceeds {m} ms", report.avg_work_ms);
         }
+    }
+    Ok(())
+}
+
+/// Serves one UI at a time over WebSocket. Each connection gets a fresh
+/// session; messages are the session's commands and events as JSON.
+fn serve(game: Option<PathBuf>, port: u16) -> Result<()> {
+    use std::sync::mpsc::channel;
+    use std::time::Duration;
+    use tungstenite::{Error as WsError, Message};
+    let listener = std::net::TcpListener::bind(("127.0.0.1", port)).with_context(|| format!("binding port {port}"))?;
+    eprintln!("pdsim: serving on ws://127.0.0.1:{port} (open the app's dev server, `npm run dev` in app/)");
+    for stream in listener.incoming() {
+        let stream = stream?;
+        stream.set_nodelay(true).ok();
+        let mut ws = match tungstenite::accept(stream) {
+            Ok(ws) => ws,
+            Err(e) => {
+                eprintln!("pdsim: handshake failed: {e}");
+                continue;
+            }
+        };
+        ws.get_ref().set_read_timeout(Some(Duration::from_millis(5))).ok();
+        eprintln!("pdsim: UI connected");
+        let (tx, rx) = channel::<String>();
+        let session = pdsim_session::Session::spawn(move |v| {
+            let _ = tx.send(v.to_string());
+        });
+        if let Some(g) = &game {
+            session.send(pdsim_session::Command::Load { path: g.display().to_string(), calibration: None });
+        }
+        'conn: loop {
+            match ws.read() {
+                Ok(Message::Text(t)) => match serde_json::from_str(t.as_str()) {
+                    Ok(v) => {
+                        if let Err(e) = session.send_json(v) {
+                            eprintln!("pdsim: bad command: {e}");
+                        }
+                    }
+                    Err(e) => eprintln!("pdsim: bad message: {e}"),
+                },
+                Ok(Message::Close(_)) => break,
+                Ok(_) => {}
+                Err(WsError::Io(e)) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
+                Err(_) => break,
+            }
+            while let Ok(m) = rx.try_recv() {
+                if ws.send(Message::text(m)).is_err() {
+                    break 'conn;
+                }
+            }
+        }
+        eprintln!("pdsim: UI disconnected");
     }
     Ok(())
 }

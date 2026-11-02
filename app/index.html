@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Playdate Performance Simulator</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <strong class="brand">pdsim</strong>
+      <input id="path" class="path" placeholder="Game folder or pdex.elf" spellcheck="false" />
+      <button id="open">Open</button>
+      <span class="sep"></span>
+      <button id="play" title="Play / pause (Space)">Play</button>
+      <button id="step" title="Run one frame (.)">Step</button>
+      <select id="mode" title="Pacing">
+        <option value="device">Device speed</option>
+        <option value="turbo">Turbo</option>
+      </select>
+      <label class="check"><input type="checkbox" id="break" /> Break on over-budget</label>
+      <button id="trace">Export trace</button>
+      <span id="calib" class="badge"></span>
+    </header>
+    <main class="layout">
+      <section class="left">
+        <div class="screen-wrap">
+          <canvas id="screen" width="400" height="240"></canvas>
+          <canvas id="overlay" width="400" height="240"></canvas>
+        </div>
+        <div class="screen-tools">
+          <label>Scale
+            <select id="scale"><option value="2" selected>2×</option><option value="3">3×</option><option value="1">1×</option></select>
+          </label>
+          <label class="check"><input type="checkbox" id="rows" /> Flash redrawn rows</label>
+        </div>
+        <div class="controls">
+          <div class="panel">
+            <h3>Input</h3>
+            <p class="hint">Arrows: d-pad · X or K: A · Z or J: B · Space: play/pause · . : step</p>
+            <div class="dpad">
+              <button data-btn="up" class="u">▲</button>
+              <button data-btn="left" class="l">◀</button>
+              <button data-btn="right" class="r">▶</button>
+              <button data-btn="down" class="d">▼</button>
+              <button data-btn="b" class="b">B</button>
+              <button data-btn="a" class="a">A</button>
+            </div>
+          </div>
+          <div class="panel">
+            <h3>Crank</h3>
+            <canvas id="crank" width="120" height="120" title="Drag or scroll to turn"></canvas>
+            <label class="check"><input type="checkbox" id="docked" checked /> Docked</label>
+            <div id="crankAngle" class="hint">0°</div>
+          </div>
+          <div class="panel">
+            <h3>Accelerometer</h3>
+            <label>x <input type="range" id="ax" min="-1" max="1" step="0.01" value="0" /></label>
+            <label>y <input type="range" id="ay" min="-1" max="1" step="0.01" value="1" /></label>
+            <label>z <input type="range" id="az" min="-1" max="1" step="0.01" value="0" /></label>
+          </div>
+        </div>
+        <div class="panel console">
+          <h3>Console</h3>
+          <pre id="log"></pre>
+        </div>
+      </section>
+      <section class="right">
+        <div class="tiles">
+          <div class="tile"><span class="label">Frame</span><span id="tFrame" class="value">–</span></div>
+          <div class="tile"><span class="label">FPS (device)</span><span id="tFps" class="value">–</span></div>
+          <div class="tile"><span class="label">Avg work</span><span id="tWork" class="value">–</span></div>
+          <div class="tile"><span class="label">Over budget</span><span id="tOver" class="value">–</span></div>
+          <div class="tile"><span class="label">Dropped</span><span id="tDrop" class="value">–</span></div>
+          <div class="tile gauge-tile"><span class="label">CPU</span><canvas id="gauge" width="120" height="70"></canvas></div>
+        </div>
+        <div class="panel">
+          <h3>Frame time <span class="hint">(device ms, stacked by category; click a bar for its flame view)</span></h3>
+          <div id="legend" class="legend"></div>
+          <div class="chart-wrap"><canvas id="frames" height="180"></canvas><div id="tip" class="tip"></div></div>
+        </div>
+        <div class="panel">
+          <h3>Memory <span id="memLabel" class="hint"></span></h3>
+          <div id="memLegend" class="legend"></div>
+          <div class="chart-wrap"><canvas id="memory" height="90"></canvas><div id="memTip" class="tip"></div></div>
+        </div>
+        <div class="split">
+          <div class="panel">
+            <h3>Hotspots <span class="hint">(self time, whole run)</span></h3>
+            <div class="table-wrap"><table id="hot"><thead><tr><th>Function</th><th>Self</th><th>Total</th></tr></thead><tbody></tbody></table></div>
+          </div>
+          <div class="panel">
+            <h3>Flame <span id="flameLabel" class="hint"></span></h3>
+            <div class="chart-wrap"><canvas id="flame" height="220"></canvas><div id="flameTip" class="tip"></div></div>
+          </div>
+        </div>
+      </section>
+    </main>
+    <div id="toast" class="toast"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

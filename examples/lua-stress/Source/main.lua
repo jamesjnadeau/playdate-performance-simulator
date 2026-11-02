@@ -79,6 +79,10 @@ function playdate.update()
 		spike()
 	end
 	gfx.sprite.update()
+	gfx.setColor(gfx.kColorWhite)
+	gfx.fillRect(0, 0, 90, 20)
+	gfx.setColor(gfx.kColorBlack)
 	gfx.drawText("frame " .. frame, 4, 4)
+	gfx.sprite.addDirtyRect(0, 0, 90, 20)
 	playdate.timer.updateTimers()
 end

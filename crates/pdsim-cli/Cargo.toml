@@ -18,3 +18,5 @@ pdsim-runner = { path = "../pdsim-runner" }
 clap = { version = "4", features = ["derive"] }
 serde_json.workspace = true
 anyhow.workspace = true
+pdsim-session = { path = "../pdsim-session" }
+tungstenite = "0.27"

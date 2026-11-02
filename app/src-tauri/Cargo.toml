@@ -1,0 +1,19 @@
+[package]
+name = "pdsim-app"
+description = "Desktop UI for the Playdate performance simulator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "pdsim-app"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.5", features = [] }
+
+[dependencies]
+tauri = { version = "2.12", features = [] }
+pdsim-session = { path = "../../crates/pdsim-session" }
+serde_json.workspace = true
