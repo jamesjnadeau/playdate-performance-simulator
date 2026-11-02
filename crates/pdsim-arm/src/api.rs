@@ -208,7 +208,7 @@ pub fn dispatch(uc: &mut Uc, idx: usize) {
         };
         (args, formatted)
     };
-    let ret = run(uc, &name, &a, formatted);
+    let ret = run(uc, &name, &a, formatted).or_else(|| stub(uc, idx, &name, &sig));
     let ret = match ret {
         Some(r) => r,
         None => {
@@ -222,6 +222,49 @@ pub fn dispatch(uc: &mut Uc, idx: usize) {
         }
     };
     set_ret(uc, sig.ret, ret);
+}
+
+/// Sound, Lua, JSON, scoreboards and networking are not simulated. Sound
+/// objects still get non-null handles, and playing charges the calibrated
+/// sound cost, so games keep running and their audio calls show up.
+fn stub(uc: &mut Uc, idx: usize, name: &str, sig: &crate::layout::Signature) -> Option<Ret> {
+    if !name.starts_with("sound.") {
+        return None;
+    }
+    let leaf = name.rsplit('.').next().unwrap_or("");
+    if uc.get_data_mut().unimplemented.insert(idx) && !uc.get_data().unimplemented.contains(&usize::MAX) {
+        uc.get_data_mut().unimplemented.insert(usize::MAX);
+        let msg =
+            "[pdsim] sound is not simulated: sound calls succeed silently and charge a flat cost".to_string();
+        uc.get_data().dev.borrow_mut().log_line(msg);
+    }
+    if leaf.starts_with("play") {
+        charge(
+            uc,
+            Category::Audio,
+            if leaf.contains("Note") {
+                "sound.playNote"
+            } else {
+                "sound.play"
+            },
+            Work::default(),
+        );
+        return Some(Ret::I(1));
+    }
+    charge(uc, Category::Audio, "sound.update", Work::default());
+    match sig.ret {
+        Some(crate::layout::Kind::Int)
+            if leaf.starts_with("new")
+                || leaf.starts_with("load")
+                || leaf.starts_with("copy")
+                || leaf == "getDefaultChannel" =>
+        {
+            let h = SOUND_BASE + 16 * (idx as u32 & 0xffff);
+            Some(Ret::I(h))
+        }
+        Some(crate::layout::Kind::Float) => Some(Ret::F(0.0)),
+        _ => Some(Ret::I(0)),
+    }
 }
 
 fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
@@ -1605,15 +1648,22 @@ fn draw_sprites(uc: &mut Uc) {
                     y,
                     flip,
                     mode,
+                    clip,
                     ..
                 } => {
                     let mut d = dev.borrow_mut();
                     d.gfx.state.draw_offset = (0, 0);
-                    d.gfx.state.clip = Some(pass.rect);
+                    d.gfx.state.clip = Some(*clip);
                     d.gfx.state.draw_mode = *mode;
                     work.add(d.gfx.draw_bitmap(*image, *x, *y, *flip));
                 }
-                DrawItem::Callback { sprite, x, y, local } => {
+                DrawItem::Callback {
+                    sprite,
+                    x,
+                    y,
+                    local,
+                    clip,
+                } => {
                     let draw = uc.get_data().sprite_fns.get(sprite).map_or(0, |f| f.draw);
                     let b = sprite_rect(uc, *sprite);
                     {
@@ -1621,7 +1671,7 @@ fn draw_sprites(uc: &mut Uc) {
                         let font = d.gfx.state.font;
                         d.gfx.state = State {
                             font,
-                            clip: Some(pass.rect),
+                            clip: Some(*clip),
                             ..State::default()
                         };
                     }

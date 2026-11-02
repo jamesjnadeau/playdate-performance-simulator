@@ -82,18 +82,22 @@ setScale(2);
 // ---- toolbar
 const pathInput = $<HTMLInputElement>("path");
 pathInput.value = localStorageGet("pdsim.path") ?? "";
+const calibInput = $<HTMLInputElement>("calibPath");
+calibInput.value = localStorageGet("pdsim.calibration") ?? "";
 function open() {
   const path = pathInput.value.trim();
   if (!path) return;
   localStorageSet("pdsim.path", path);
+  localStorageSet("pdsim.calibration", calibInput.value.trim());
   frames.length = 0;
   selected = null;
   flameRoot = null;
   $("log").textContent = "";
-  backend.send({ type: "load", path });
+  backend.send({ type: "load", path, calibration: calibInput.value.trim() || null });
 }
 $("open").onclick = open;
 pathInput.onkeydown = (e) => e.key === "Enter" && open();
+calibInput.onkeydown = (e) => e.key === "Enter" && open();
 const playBtn = $<HTMLButtonElement>("play");
 const togglePlay = () => backend.send({ type: running ? "pause" : "play" });
 playBtn.onclick = togglePlay;

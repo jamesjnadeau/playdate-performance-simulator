@@ -47,6 +47,7 @@ button:disabled { opacity: 0.5; cursor: default; }
   flex: 1 1 260px; min-width: 160px; background: var(--surface-0);
   border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px;
 }
+.path.calib { flex: 0 1 220px; }
 .sep { width: 1px; height: 20px; background: var(--border); }
 .check { display: inline-flex; align-items: center; gap: 4px; color: var(--text-secondary); }
 .badge { margin-left: auto; color: var(--text-secondary); }

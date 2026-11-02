@@ -65,8 +65,9 @@ cannot tell apart keep their prior) and costs kept non-negative.
    cargo run -p pdsim-cli -- run my-game --calibration calibration/rev-a.json
    ```
 
-   (In the app, set the profile in the session `load` command; a picker is a
-   to-do.) Please consider contributing `rev-a.json`/`rev-b.json` back.
+   In the app, enter the profile's path in the calibration field before
+   opening the game. Please consider contributing `rev-a.json`/`rev-b.json`
+   back.
 
 Rev A and Rev B devices differ (CPU revision and memory), so fit each
 separately and pass `--device rev-b` for a Rev B.

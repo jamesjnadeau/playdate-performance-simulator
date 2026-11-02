@@ -42,6 +42,7 @@ pub const SPRITE_BASE: u32 = 0x7300_0000;
 pub const FILE_BASE: u32 = 0x7400_0000;
 pub const MENU_BASE: u32 = 0x7500_0000;
 pub const TABLE_BASE: u32 = 0x7600_0000;
+pub const SOUND_BASE: u32 = 0x7700_0000;
 
 /// Callbacks a sprite has registered.
 #[derive(Debug, Clone, Copy, Default)]

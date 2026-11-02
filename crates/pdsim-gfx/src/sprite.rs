@@ -195,6 +195,8 @@ pub enum DrawItem {
         y: i32,
         flip: Flip,
         mode: DrawMode,
+        /// Screen area to draw into (dirty rect ∩ sprite clip rect).
+        clip: Rect,
     },
     /// Call the sprite's draw callback with the sprite at `(x, y)` and the
     /// dirty area in sprite-local coordinates.
@@ -203,6 +205,8 @@ pub enum DrawItem {
         x: i32,
         y: i32,
         local: Rect,
+        /// Screen area to draw into (dirty rect ∩ sprite clip rect).
+        clip: Rect,
     },
 }
 
@@ -404,7 +408,9 @@ impl SpriteSystem {
                         continue;
                     }
                     let b = screen_bounds(s);
-                    if b.intersect(&rect).is_empty() {
+                    // Draw only inside the dirty rect and the sprite's clip rect.
+                    let clip = s.clip_rect.map_or(rect, |c| c.intersect(&rect));
+                    if b.intersect(&clip).is_empty() {
                         continue;
                     }
                     if s.opaque && b.intersect(&rect) == rect {
@@ -421,6 +427,7 @@ impl SpriteSystem {
                             x: b.x,
                             y: b.y,
                             local,
+                            clip,
                         });
                     } else if let Some(img) = s.image {
                         items.push(DrawItem::Image {
@@ -430,6 +437,7 @@ impl SpriteSystem {
                             y: b.y,
                             flip: s.flip,
                             mode: s.draw_mode,
+                            clip,
                         });
                     }
                 }
@@ -861,7 +869,15 @@ mod tests {
         assert_eq!(first.len(), 1);
         assert_eq!(first[0].rect, Rect::new(15, 15, 10, 10));
         assert!(sys.plan_draw((0, 0)).is_empty(), "nothing moved");
-        sys.modify(a, |s| s.x = 100.0);
+        sys.modify(a, |s| s.clip_rect = Some(Rect::new(0, 0, 18, 240)));
+        let clipped = sys.plan_draw((0, 0));
+        assert!(
+            matches!(clipped[0].items[0], DrawItem::Image { clip, .. } if clip == Rect::new(15, 15, 3, 10))
+        );
+        sys.modify(a, |s| {
+            s.clip_rect = None;
+            s.x = 100.0
+        });
         let moved = sys.plan_draw((0, 0));
         assert_eq!(moved.len(), 2, "old and new bounds");
         let total: usize = moved.iter().map(|p| p.items.len()).sum();

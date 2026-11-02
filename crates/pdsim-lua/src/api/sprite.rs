@@ -400,21 +400,28 @@ pub fn register(lua: &Lua, pd: &Table, ctx: &CtxRef) -> Result<()> {
                         y,
                         flip,
                         mode,
+                        clip,
                         ..
                     } => {
                         let mut d = c.dev();
                         d.gfx.state.draw_offset = (0, 0);
-                        d.gfx.state.clip = Some(pass.rect);
+                        d.gfx.state.clip = Some(*clip);
                         d.gfx.state.draw_mode = *mode;
                         work.add(d.gfx.draw_bitmap(*image, *x, *y, *flip));
                     }
-                    DrawItem::Callback { sprite, x, y, local } => {
+                    DrawItem::Callback {
+                        sprite,
+                        x,
+                        y,
+                        local,
+                        clip,
+                    } => {
                         {
                             let mut d = c.dev();
                             let font = d.gfx.state.font;
                             d.gfx.state = State {
                                 font,
-                                clip: Some(pass.rect),
+                                clip: Some(*clip),
                                 draw_offset: (*x, *y),
                                 ..State::default()
                             };
