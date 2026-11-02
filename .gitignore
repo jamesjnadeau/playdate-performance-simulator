@@ -5,3 +5,4 @@ node_modules
 dist
 *.pdx
 /app/src-tauri/gen
+/.claude/worktrees

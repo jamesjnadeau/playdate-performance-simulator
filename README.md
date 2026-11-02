@@ -88,9 +88,12 @@ pdsim run <game-dir | Source/ | pdex.elf>
     --frames-out f.jsonl     per-frame stats
     --screenshot out.png     last frame
     --calibration prof.json  calibrated profile (default: built-in estimates)
+    --data-dir DIR           the game's saved data (default: a temp folder)
+    --sdk DIR                Playdate SDK (default: $PLAYDATE_SDK_PATH)
     --max-over-budget N      fail if more than N frames go over budget
     --max-avg-ms X           fail if the average frame work exceeds X ms
     --no-profile             skip per-function attribution (faster)
+    -q, --quiet              hide the game's console output
 pdsim serve [game]           serve a session over WebSocket for the web UI
 pdsim default-calibration    print the built-in profile
 ```
@@ -102,9 +105,15 @@ Input scripts:
     { "frame": 10, "press": ["a"] },
     { "frame": 12, "release": ["a"] },
     { "frame": 20, "crank": 15.0 },
-    { "frame": 30, "crank_to": 90.0, "dock": false }
+    { "frame": 30, "crank_to": 90.0, "dock": false },
+    { "frame": 40, "accel": [0.0, 1.0, 0.0] }
   ], "crank_per_frame": 0.0 }
 ```
+
+The full reference, including the report and per-frame formats and exit
+codes, is in [docs/cli.md](docs/cli.md). For a walkthrough of profiling
+your own game (input scripts, reading hotspots, CI limits), see
+[docs/testing-games.md](docs/testing-games.md).
 
 ## Accuracy
 
@@ -130,8 +139,9 @@ to fit them to your device in a few minutes, and
 | `app/` | Tauri v2 desktop app (TypeScript + Vite) |
 | `calibration/` | built-in estimates and the device bench projects |
 | `tools/fit-calibration` | fits a profile to device timings |
+| `.claude/skills/playdate-perf-test` | skill for AI agents that test a game's performance with this repo |
 | `examples/` | Lua and C samples with known hot paths |
-| `docs/` | [architecture](docs/architecture.md), [calibration](docs/calibration.md), [accuracy](docs/accuracy.md) |
+| `docs/` | [testing your game](docs/testing-games.md), [CLI reference](docs/cli.md), [architecture](docs/architecture.md), [session protocol](docs/session-protocol.md), [calibration](docs/calibration.md), [accuracy](docs/accuracy.md) |
 
 ## Development
 

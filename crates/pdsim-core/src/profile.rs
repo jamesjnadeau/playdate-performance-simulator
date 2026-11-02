@@ -51,7 +51,7 @@ impl FrameProfile {
 /// One row of the hotspot table.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Hotspot {
-    /// Function name (`source:line function` for Lua, symbol for C).
+    /// Function name (`function source:line` for Lua, symbol for C).
     pub name: String,
     /// Cycles spent in the function itself.
     pub self_cycles: u64,
