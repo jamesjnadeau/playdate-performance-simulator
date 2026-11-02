@@ -16,4 +16,5 @@ pub mod types;
 pub use bitmap::{Bitmap, ImageError};
 pub use font::Font;
 pub use graphics::{BitmapId, FontId, Graphics, State, TextLayout, FRAME};
+pub use sprite::{SpriteId, SpriteSystem};
 pub use types::*;

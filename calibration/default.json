@@ -95,7 +95,8 @@
     "gc_per_alloc_byte": 0.9,
     "gc_per_free_byte": 0.3,
     "gc_per_work_unit": 1.6,
-    "native_call_overhead": 160.0
+    "native_call_overhead": 160.0,
+    "c_function_call": 220.0
   },
   "arm": {
     "classes": {

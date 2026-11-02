@@ -3,6 +3,11 @@ resolver = "2"
 members = [
     "crates/pdsim-core",
     "crates/pdsim-gfx",
+    "crates/pdsim-device",
+    "crates/pdsim-lua",
+    "crates/pdsim-runner",
+    "crates/pdsim-cli",
+
 ]
 
 [workspace.package]

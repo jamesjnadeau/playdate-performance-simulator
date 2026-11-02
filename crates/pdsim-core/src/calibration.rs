@@ -74,6 +74,14 @@ pub struct LuaCosts {
     pub gc_per_work_unit: f64,
     /// Overhead of a call from Lua into a native API function.
     pub native_call_overhead: f64,
+    /// Average cost of a Lua standard-library C function call (math.sin,
+    /// string.format, ...), on top of the CALL opcode.
+    #[serde(default = "default_c_call")]
+    pub c_function_call: f64,
+}
+
+fn default_c_call() -> f64 {
+    220.0
 }
 
 /// ARM Cortex-M7 instruction class costs, in cycles.

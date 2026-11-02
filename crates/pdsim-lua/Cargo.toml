@@ -1,0 +1,21 @@
+[package]
+name = "pdsim-lua"
+description = "Runs Playdate Lua games on a patched, cycle-counting Lua 5.4 VM"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+links = "pdsimlua"
+build = "build.rs"
+
+[dependencies]
+pdsim-core = { path = "../pdsim-core" }
+pdsim-gfx = { path = "../pdsim-gfx" }
+pdsim-device = { path = "../pdsim-device" }
+mlua = { version = "0.12", default-features = false, features = ["lua54", "serialize"] }
+# "external": this crate compiles and links the patched Lua itself (build.rs).
+mlua-sys = { version = "0.13", default-features = false, features = ["lua54", "external"] }
+serde_json.workspace = true
+
+[build-dependencies]
+cc = "1"

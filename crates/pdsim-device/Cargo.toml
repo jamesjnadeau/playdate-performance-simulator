@@ -1,0 +1,13 @@
+[package]
+name = "pdsim-device"
+description = "Simulated Playdate device state shared by the Lua and C backends"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+pdsim-core = { path = "../pdsim-core" }
+pdsim-gfx = { path = "../pdsim-gfx" }
+serde.workspace = true
+serde_json.workspace = true

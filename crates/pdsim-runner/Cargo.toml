@@ -1,0 +1,12 @@
+[package]
+name = "pdsim-runner"
+description = "Loads a Playdate game (Lua or C) into the performance simulator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+pdsim-core = { path = "../pdsim-core" }
+pdsim-device = { path = "../pdsim-device" }
+pdsim-lua = { path = "../pdsim-lua" }

@@ -187,6 +187,13 @@ impl Graphics {
         self.fonts.get(id as usize).and_then(|f| f.as_ref())
     }
 
+    /// Sets a font's tracking.
+    pub fn set_font_tracking(&mut self, id: FontId, tracking: i32) {
+        if let Some(Some(f)) = self.fonts.get_mut(id as usize) {
+            f.tracking = tracking;
+        }
+    }
+
     /// The system font.
     pub fn system_font(&self) -> FontId {
         self.system_font

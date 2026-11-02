@@ -1,0 +1,122 @@
+--- a/lvm.c
++++ b/lvm.c
+@@ -1149,6 +1149,7 @@
+     updatebase(ci);  /* correct stack */ \
+   } \
+   i = *(pc++); \
++  pdsim_ops[GET_OPCODE(i)]++;  /* pdsim */ \
+ }
+ 
+ #define vmdispatch(o)	switch(o)
+@@ -1162,6 +1163,7 @@
+   StkId base;
+   const Instruction *pc;
+   int trap;
++  unsigned long long *pdsim_ops;  /* pdsim: opcode histogram to count into */
+ #if LUA_USE_JUMPTABLE
+ #include "ljumptab.h"
+ #endif
+@@ -1169,6 +1171,8 @@
+   trap = L->hookmask;
+  returning:  /* trap already set */
+   cl = ci_func(ci);
++  pdsim_ops = pdsim_isnative(cl->p) ? G(L)->pdsim_native_opcount
++                                    : G(L)->pdsim_opcount;  /* pdsim */
+   k = cl->p->k;
+   pc = ci->u.l.savedpc;
+   if (l_unlikely(trap))
+--- a/lstate.c
++++ b/lstate.c
+@@ -411,6 +411,9 @@
+   g->gcstepsize = LUAI_GCSTEPSIZE;
+   setgcparam(g->genmajormul, LUAI_GENMAJORMUL);
+   g->genminormul = LUAI_GENMINORMUL;
++  memset(g->pdsim_opcount, 0, sizeof(g->pdsim_opcount));  /* pdsim */
++  memset(g->pdsim_native_opcount, 0, sizeof(g->pdsim_native_opcount));
++  g->pdsim_alloced = g->pdsim_freed = g->pdsim_gcwork = g->pdsim_ccalls = 0;
+   for (i=0; i < LUA_NUMTAGS; i++) g->mt[i] = NULL;
+   if (luaD_rawrunprotected(L, f_luaopen, NULL) != LUA_OK) {
+     /* memory allocation error: free partial state */
+--- a/lmem.c
++++ b/lmem.c
+@@ -152,6 +152,7 @@
+   lua_assert((osize == 0) == (block == NULL));
+   callfrealloc(g, block, osize, 0);
+   g->GCdebt -= osize;
++  g->pdsim_freed += osize;  /* pdsim */
+ }
+ 
+ 
+@@ -185,6 +186,8 @@
+   }
+   lua_assert((nsize == 0) == (newblock == NULL));
+   g->GCdebt = (g->GCdebt + nsize) - osize;
++  if (nsize > osize) g->pdsim_alloced += nsize - osize;  /* pdsim */
++  else g->pdsim_freed += osize - nsize;
+   return newblock;
+ }
+ 
+@@ -210,6 +213,7 @@
+         luaM_error(L);
+     }
+     g->GCdebt += size;
++    g->pdsim_alloced += size;  /* pdsim */
+     return newblock;
+   }
+ }
+--- a/lgc.c
++++ b/lgc.c
+@@ -1646,6 +1646,7 @@
+     default: lua_assert(0); return 0;
+   }
+   g->gcstopem = 0;
++  g->pdsim_gcwork += work;  /* pdsim */
+   return work;
+ }
+ 
+--- a/lstate.h
++++ b/lstate.h
+@@ -141,6 +141,18 @@
+ */
+ #define EXTRA_STACK   5
+ 
++/* pdsim: size of the opcode counter table (>= NUM_OPCODES) */
++#define PDSIM_MAXOPS	128
++
++/*
++** pdsim: functions from chunks named "=[pdsim]..." implement parts of the
++** Playdate API in Lua. Their instructions go to a separate histogram, and
++** C functions they call are not counted, so they are not charged as game
++** code (they charge a native API cost instead).
++*/
++#define pdsim_isnative(p) ((p)->source != NULL && \
++  memcmp(getstr((p)->source), "=[pdsim]", 8) == 0)
++
+ 
+ #define BASIC_STACK_SIZE        (2*LUA_MINSTACK)
+ 
+@@ -267,6 +279,13 @@
+   lu_byte gckind;  /* kind of GC running */
+   lu_byte gcstopem;  /* stops emergency collections */
+   lu_byte genminormul;  /* control for minor generational collections */
++  /* pdsim: counters for the Playdate performance simulator */
++  unsigned long long pdsim_opcount[PDSIM_MAXOPS];  /* executed opcodes */
++  unsigned long long pdsim_native_opcount[PDSIM_MAXOPS];  /* ... in "=[pdsim]" chunks */
++  unsigned long long pdsim_alloced;  /* bytes allocated */
++  unsigned long long pdsim_freed;  /* bytes freed */
++  unsigned long long pdsim_gcwork;  /* units of collector work */
++  unsigned long long pdsim_ccalls;  /* C functions called by game code */
+   lu_byte genmajormul;  /* control for major generational collections */
+   lu_byte gcstp;  /* control whether GC is running */
+   lu_byte gcemergency;  /* true if this is an emergency collection */
+--- a/ldo.c
++++ b/ldo.c
+@@ -544,6 +544,8 @@
+   int n;  /* number of returns */
+   CallInfo *ci;
+   checkstackGCp(L, LUA_MINSTACK, func);  /* ensure minimum stack size */
++  if (!(isLua(L->ci) && pdsim_isnative(ci_func(L->ci)->p)))
++    G(L)->pdsim_ccalls++;  /* pdsim: a C function called by game code */
+   L->ci = ci = prepCallInfo(L, func, nresults, CIST_C,
+                                L->top.p + LUA_MINSTACK);
+   lua_assert(ci->top.p <= L->stack_last.p);

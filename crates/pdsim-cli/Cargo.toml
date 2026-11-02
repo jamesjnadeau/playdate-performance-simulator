@@ -1,0 +1,20 @@
+[package]
+name = "pdsim-cli"
+description = "Headless runner for the Playdate performance simulator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "pdsim"
+path = "src/main.rs"
+
+[dependencies]
+pdsim-core = { path = "../pdsim-core" }
+pdsim-device = { path = "../pdsim-device" }
+pdsim-lua = { path = "../pdsim-lua" }
+pdsim-runner = { path = "../pdsim-runner" }
+clap = { version = "4", features = ["derive"] }
+serde_json.workspace = true
+anyhow.workspace = true

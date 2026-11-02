@@ -1,0 +1,6 @@
+name=Lua Stress
+author=Playdate Performance Simulator
+description=A sample with known hot paths for validating the simulator
+bundleID=dev.pdsim.luastress
+version=1.0
+buildNumber=1
