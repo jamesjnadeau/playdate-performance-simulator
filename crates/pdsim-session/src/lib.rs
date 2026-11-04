@@ -242,7 +242,10 @@ impl Runner {
         self.anchor_device_ms = self.device_ms();
     }
 
+    /// Starts a new real-time window and a full stats interval with it, so the
+    /// next `stats` has enough wall time to measure.
     fn mark_realtime(&mut self) {
+        self.last_stats = Instant::now();
         self.rt_wall = Instant::now();
         self.rt_device_ms = self.device_ms();
     }
@@ -640,6 +643,37 @@ mod tests {
             done_rx.recv_timeout(Duration::from_secs(3)).is_ok(),
             "Session::drop hung while running"
         );
+    }
+
+    #[test]
+    fn stats_while_running_always_carry_realtime() {
+        // A (re)start must not send a stats event too soon to measure, or the
+        // speed tile blinks '–' on every play.
+        let events = Arc::new(Mutex::new(vec![]));
+        let ev = events.clone();
+        let s = Session::spawn(move |v| ev.lock().unwrap().push(v));
+        std::thread::sleep(Duration::from_millis(150));
+        s.send(Command::Load {
+            path: example(),
+            calibration: None,
+        });
+        assert!(wait_for(&events, "loaded", Duration::from_secs(20)).is_some());
+        std::thread::sleep(Duration::from_millis(400));
+        s.send(Command::Pause);
+        std::thread::sleep(Duration::from_millis(150));
+        s.send(Command::Play);
+        std::thread::sleep(Duration::from_millis(400));
+        s.send(Command::Pause);
+        std::thread::sleep(Duration::from_millis(100));
+        // Each Pause flushes one null (sent just before its `state`); any more
+        // came from a running session.
+        let nulls = events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| e["type"] == "stats" && e["realtime"].is_null())
+            .count();
+        assert_eq!(nulls, 2, "null realtime stats beyond the two pauses");
     }
 
     #[test]
