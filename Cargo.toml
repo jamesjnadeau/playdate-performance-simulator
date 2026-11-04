@@ -35,3 +35,19 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+
+# The crates that run game code every frame: as fast as release.
+[profile.dev.package.pdsim-arm]
+opt-level = 3
+
+[profile.dev.package.pdsim-lua]
+opt-level = 3
+
+[profile.dev.package.pdsim-core]
+opt-level = 3
+
+[profile.dev.package.pdsim-gfx]
+opt-level = 3
+
+[profile.dev.package.pdsim-device]
+opt-level = 3
