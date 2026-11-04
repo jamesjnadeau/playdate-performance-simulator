@@ -141,7 +141,7 @@ to fit them to your device in a few minutes, and
 | `tools/fit-calibration` | fits a profile to device timings |
 | `.claude/skills/playdate-perf-test` | skill for AI agents that test a game's performance with this repo |
 | `examples/` | Lua and C samples with known hot paths |
-| `docs/` | [testing your game](docs/testing-games.md), [CLI reference](docs/cli.md), [architecture](docs/architecture.md), [session protocol](docs/session-protocol.md), [calibration](docs/calibration.md), [accuracy](docs/accuracy.md) |
+| `docs/` | [testing your game](docs/testing-games.md), [CLI reference](docs/cli.md), [architecture](docs/architecture.md), [session protocol](docs/session-protocol.md), [calibration](docs/calibration.md), [accuracy](docs/accuracy.md), [browser (WASM) port plan](docs/wasm-port.md) |
 
 ## Development
 
