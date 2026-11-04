@@ -137,10 +137,22 @@ struct Runner {
     // Pacing anchor: device ms at `anchor_wall`.
     anchor_wall: Instant,
     anchor_device_ms: f64,
+    // Real-time measurement baseline, kept apart from the pacing anchor
+    // (pacing re-anchors when the host falls behind, which would hide it).
+    rt_wall: Instant,
+    rt_device_ms: f64,
     log_sent: usize,
     path: Option<String>,
     calibration: Calibration,
     loaded_event: Option<Value>,
+}
+
+/// Device ms per wall ms, or `None` if too little wall time passed to tell.
+fn realtime_ratio(device_ms: f64, wall: Duration) -> Option<f64> {
+    if wall < Duration::from_millis(50) {
+        return None;
+    }
+    Some(device_ms / (wall.as_secs_f64() * 1000.0))
 }
 
 fn b64(bytes: &[u8]) -> String {
@@ -161,6 +173,8 @@ impl Runner {
             last_stats: Instant::now(),
             anchor_wall: Instant::now(),
             anchor_device_ms: 0.0,
+            rt_wall: Instant::now(),
+            rt_device_ms: 0.0,
             log_sent: 0,
             path: None,
             calibration: Calibration::default_estimates(),
@@ -193,7 +207,9 @@ impl Runner {
             }
             if self.running && self.game.is_some() {
                 self.frame();
-                self.pace(&rx);
+                if self.pace(&rx) {
+                    return;
+                }
             }
         }
     }
@@ -209,12 +225,26 @@ impl Runner {
         }));
     }
 
-    fn reanchor(&mut self) {
-        self.anchor_wall = Instant::now();
-        self.anchor_device_ms = self
-            .game
+    fn device_ms(&self) -> f64 {
+        self.game
             .as_ref()
-            .map_or(0.0, |g| g.device().borrow().scheduler.now_ms());
+            .map_or(0.0, |g| g.device().borrow().scheduler.now_ms())
+    }
+
+    /// Restarts pacing and the real-time measurement from now.
+    fn reanchor(&mut self) {
+        self.reanchor_pacing();
+        self.mark_realtime();
+    }
+
+    fn reanchor_pacing(&mut self) {
+        self.anchor_wall = Instant::now();
+        self.anchor_device_ms = self.device_ms();
+    }
+
+    fn mark_realtime(&mut self) {
+        self.rt_wall = Instant::now();
+        self.rt_device_ms = self.device_ms();
     }
 
     fn handle(&mut self, c: Command) {
@@ -389,11 +419,12 @@ impl Runner {
         }
     }
 
-    fn pace(&mut self, rx: &Receiver<Command>) {
+    /// Waits until device time catches up with wall time. Returns true on `Quit`.
+    fn pace(&mut self, rx: &Receiver<Command>) -> bool {
         if self.turbo {
-            return;
+            return false;
         }
-        let Some(g) = &self.game else { return };
+        let Some(g) = &self.game else { return false };
         let device_ms = g.device().borrow().scheduler.now_ms();
         let target = self.anchor_wall
             + Duration::from_secs_f64(((device_ms - self.anchor_device_ms) / self.speed / 1000.0).max(0.0));
@@ -402,9 +433,7 @@ impl Runner {
             // Sleep, but wake for commands (input should not wait a frame).
             if let Ok(c) = rx.recv_timeout(target - now) {
                 if c == Command::Quit {
-                    self.game = None;
-                    self.running = false;
-                    return;
+                    return true;
                 }
                 self.handle(c);
                 // Keep the remaining wait.
@@ -415,8 +444,9 @@ impl Runner {
             }
         } else if now - target > Duration::from_millis(250) {
             // The host fell behind; don't try to catch up in a burst.
-            self.reanchor();
+            self.reanchor_pacing();
         }
+        false
     }
 
     fn send_log(&mut self) {
@@ -435,6 +465,15 @@ impl Runner {
     fn flush_stats(&mut self) {
         self.last_stats = Instant::now();
         self.send_log();
+        if self.game.is_none() {
+            return;
+        }
+        let realtime = if self.running {
+            realtime_ratio(self.device_ms() - self.rt_device_ms, self.rt_wall.elapsed())
+        } else {
+            None
+        };
+        self.mark_realtime();
         let Some(g) = &self.game else { return };
         let frames = std::mem::take(&mut self.pending);
         let d = g.device().borrow();
@@ -450,6 +489,7 @@ impl Runner {
             "deviceMs": d.scheduler.now_ms(),
             "refreshRate": d.scheduler.refresh_rate(),
             "memory": last.map(|f| f.memory),
+            "realtime": realtime,
         }));
     }
 
@@ -577,6 +617,72 @@ mod tests {
         assert!(turbo > frames, "turbo {turbo} vs device {frames}");
         let stats = wait_for(&events, "stats", Duration::from_secs(1)).unwrap();
         assert!(stats["hotspots"].as_array().unwrap().len() > 1);
+    }
+
+    #[test]
+    fn dropping_a_running_session_returns() {
+        let events = Arc::new(Mutex::new(vec![]));
+        let ev = events.clone();
+        let s = Session::spawn(move |v| ev.lock().unwrap().push(v));
+        s.send(Command::Load {
+            path: example(),
+            calibration: None,
+        });
+        assert!(wait_for(&events, "loaded", Duration::from_secs(20)).is_some());
+        std::thread::sleep(Duration::from_millis(200));
+        // Device mode sleeps between frames; a quit that lands then must still end the thread.
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            drop(s);
+            let _ = done_tx.send(());
+        });
+        assert!(
+            done_rx.recv_timeout(Duration::from_secs(3)).is_ok(),
+            "Session::drop hung while running"
+        );
+    }
+
+    #[test]
+    fn realtime_ratio_needs_enough_wall_time() {
+        assert_eq!(realtime_ratio(100.0, Duration::from_millis(40)), None);
+        assert_eq!(realtime_ratio(100.0, Duration::from_millis(100)), Some(1.0));
+        assert_eq!(realtime_ratio(50.0, Duration::from_millis(100)), Some(0.5));
+    }
+
+    fn latest_realtime(events: &Arc<Mutex<Vec<Value>>>) -> Option<f64> {
+        events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| e["type"] == "stats")
+            .filter_map(|e| e["realtime"].as_f64())
+            .next_back()
+    }
+
+    #[test]
+    fn stats_report_realtime() {
+        let events = Arc::new(Mutex::new(vec![]));
+        let ev = events.clone();
+        let s = Session::spawn(move |v| ev.lock().unwrap().push(v));
+        s.send(Command::Load {
+            path: example(),
+            calibration: None,
+        });
+        assert!(wait_for(&events, "loaded", Duration::from_secs(20)).is_some());
+        std::thread::sleep(Duration::from_millis(600));
+        let device = latest_realtime(&events).expect("no realtime in device mode");
+        assert!((0.7..=1.3).contains(&device), "device-mode realtime {device}");
+
+        events.lock().unwrap().clear();
+        s.send(Command::SetMode { mode: "turbo".into() });
+        std::thread::sleep(Duration::from_millis(600));
+        let turbo = latest_realtime(&events).expect("no realtime in turbo");
+        assert!(turbo > 1.5, "turbo realtime {turbo}");
+
+        events.lock().unwrap().clear();
+        s.send(Command::Pause);
+        let paused = wait_for(&events, "stats", Duration::from_secs(1)).unwrap();
+        assert!(paused["realtime"].is_null(), "{paused}");
     }
 
     #[test]

@@ -34,7 +34,7 @@ browser it connects to `ws://<host>:8765`, or to the URL in `?ws=`.
 | `loaded` | `path`, `description`, `calibration`, `estimated`, `cpuHz`, `ramBytes`, `categories` | A game loaded. |
 | `state` | `running`, `mode`, `speed`, `breakOnOverBudget`, `loaded` | After any command that changes them. |
 | `frame` | `index`, `fb`, `rows`, `inverted`, `overBudget` | Every frame. `fb` is the 400×240 1-bit framebuffer, base64, 52-byte rows (bit 7 of byte 0 is pixel 0; 1 = white). `rows` is a base64 240-bit mask of rows redrawn this frame (bit *i* % 8 of byte *i* / 8). |
-| `stats` | `frames`, `hotspots`, `droppedTotal`, `overBudgetTotal`, `frameIndex`, `deviceMs`, `refreshRate`, `memory` | About 10×/s and on pause. `frames` holds every frame since the last `stats`: `{index, workMs, frameMs, budgetMs, cpu, categories, overBudget, dropped, rows, memory}`. `hotspots` is the top 40. |
+| `stats` | `frames`, `hotspots`, `droppedTotal`, `overBudgetTotal`, `frameIndex`, `deviceMs`, `refreshRate`, `memory`, `realtime` | About 10×/s and on pause. `frames` holds every frame since the last `stats`: `{index, workMs, frameMs, budgetMs, cpu, categories, overBudget, dropped, rows, memory}`. `hotspots` is the top 40. `realtime` is device time ÷ wall time since the previous `stats` (about 1 at device speed, more in turbo, less when the host can't keep up), or `null` when paused or stepping. |
 | `flame` | `index`, `workCycles`, `folded` | After `step`, a break, or a `flame` command. `folded` maps `;`-separated stacks to cycles. |
 | `log` | `lines` | New console output. |
 | `break` | `reason` | Paused by break-on-over-budget. |
