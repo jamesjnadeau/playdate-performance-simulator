@@ -31,6 +31,10 @@ let flameTotal = 0;
 let cpuHz = 168e6;
 let showRows = false;
 let pendingFrame: Event | null = null;
+// Simulation speed vs real time, averaged over the last few stats events.
+const rtSamples: number[] = [];
+let mode = "device";
+let speed = 1;
 
 const backend = await connect();
 
@@ -293,6 +297,21 @@ function updateTiles(e: Event) {
     `<tr><td>${escapeHtml(h.name)}</td><td>${((h.self_cycles / total) * 100).toFixed(1)}%</td><td>${((h.total_cycles / total) * 100).toFixed(1)}%</td></tr>`).join("");
 }
 
+function updateSpeed(realtime: number | null | undefined) {
+  const tile = $("tSpeed");
+  if (realtime == null) {
+    rtSamples.length = 0;
+    tile.textContent = "–";
+    tile.classList.remove("bad");
+    return;
+  }
+  rtSamples.push(realtime);
+  if (rtSamples.length > 5) rtSamples.shift();
+  const avg = rtSamples.reduce((s, v) => s + v, 0) / rtSamples.length;
+  tile.textContent = `${avg < 10 ? avg.toFixed(2) : avg.toFixed(0)}×`;
+  tile.classList.toggle("bad", mode === "device" && avg < 0.9 * speed);
+}
+
 // Draw at most once per animation frame.
 function schedule() {
   if ((schedule as any).queued) return;
@@ -313,6 +332,7 @@ backend.onEvent((e) => {
       frames.push(...e.frames);
       if (frames.length > MAX_FRAMES) frames.splice(0, frames.length - MAX_FRAMES);
       updateTiles(e);
+      updateSpeed(e.realtime);
       redrawCharts();
       break;
     case "flame":
@@ -324,12 +344,16 @@ backend.onEvent((e) => {
       break;
     case "state":
       running = e.running;
+      if (e.mode !== mode || e.speed !== speed) rtSamples.length = 0;
+      mode = e.mode;
+      speed = e.speed;
       playBtn.textContent = running ? "Pause" : "Play";
       $<HTMLSelectElement>("mode").value = e.mode;
       $<HTMLInputElement>("break").checked = e.breakOnOverBudget;
       break;
     case "loaded":
       cpuHz = e.cpuHz;
+      rtSamples.length = 0;
       pathInput.value = e.path;
       $("calib").textContent = e.calibration;
       $("calib").classList.toggle("est", e.estimated);
