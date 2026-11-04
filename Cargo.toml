@@ -26,3 +26,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 anyhow = "1"
+
+# Dev builds run games: optimise dependencies fully (Unicorn's C build follows
+# opt-level through cmake) and our own crates lightly, so rebuilds stay quick
+# while `tauri dev` and `cargo run` keep up with real time.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
