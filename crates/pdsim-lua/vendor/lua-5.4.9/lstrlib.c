@@ -833,6 +833,13 @@ typedef struct GMatchState {
   MatchState ms;  /* match state */
 } GMatchState;
 
+/* pdsim: device (ARM32) size of GMatchState, for memory accounting */
+#define PDSIM_DSIZE_GMATCHSTATE	292
+#include <stdint.h>
+#if UINTPTR_MAX == 0xffffffffu
+_Static_assert(sizeof(GMatchState) == PDSIM_DSIZE_GMATCHSTATE, "GMatchState");
+#endif
+
 
 static int gmatch_aux (lua_State *L) {
   GMatchState *gm = (GMatchState *)lua_touserdata(L, lua_upvalueindex(3));
@@ -857,7 +864,8 @@ static int gmatch (lua_State *L) {
   size_t init = posrelatI(luaL_optinteger(L, 3, 1), ls) - 1;
   GMatchState *gm;
   lua_settop(L, 2);  /* keep strings on closure to avoid being collected */
-  gm = (GMatchState *)lua_newuserdatauv(L, sizeof(GMatchState), 0);
+  gm = (GMatchState *)pdsim_newuserdatauv(L, sizeof(GMatchState), 0,
+                                            PDSIM_DSIZE_GMATCHSTATE);
   if (init > ls)  /* start after string's end? */
     init = ls + 1;  /* avoid overflows in 's + init' */
   prepstate(&gm->ms, L, s, ls, p, lp);

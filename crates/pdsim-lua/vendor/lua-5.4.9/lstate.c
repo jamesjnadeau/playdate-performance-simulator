@@ -47,6 +47,43 @@ typedef struct LG {
 } LG;
 
 
+/*
+** pdsim: on a 32-bit target (whose layout is the Playdate's), check the
+** device sizes in lstate.h against the real ones.
+*/
+#include <stdint.h>
+#if UINTPTR_MAX == 0xffffffffu
+#include "lparser.h"
+#define pdsim_checksize(x,dsz)	_Static_assert((dsz) == (x), #x);
+pdsim_checksize(sizeof(char), PDSIM_DSIZE(char))
+pdsim_checksize(sizeof(ls_byte), PDSIM_DSIZE(ls_byte))
+pdsim_checksize(sizeof(Instruction), PDSIM_DSIZE(Instruction))
+pdsim_checksize(sizeof(TValue), PDSIM_DSIZE(TValue))
+pdsim_checksize(sizeof(StackValue), PDSIM_DSIZE(StackValue))
+pdsim_checksize(sizeof(Node), PDSIM_DSIZE(Node))
+pdsim_checksize(sizeof(Table), PDSIM_DSIZE(Table))
+pdsim_checksize(sizeof(UpVal), PDSIM_DSIZE(UpVal))
+pdsim_checksize(sizeof(Proto), PDSIM_DSIZE(Proto))
+pdsim_checksize(sizeof(CallInfo), PDSIM_DSIZE(CallInfo))
+pdsim_checksize(sizeof(Upvaldesc), PDSIM_DSIZE(Upvaldesc))
+pdsim_checksize(sizeof(LocVar), PDSIM_DSIZE(LocVar))
+pdsim_checksize(sizeof(AbsLineInfo), PDSIM_DSIZE(AbsLineInfo))
+pdsim_checksize(sizeof(UValue), PDSIM_DSIZE(UValue))
+pdsim_checksize(sizeof(TString *), PDSIM_DSIZE(TString *))
+pdsim_checksize(sizeof(Proto *), PDSIM_DSIZE(Proto *))
+pdsim_checksize(sizeof(UpVal *), PDSIM_DSIZE(UpVal *))
+pdsim_checksize(sizeof(Vardesc), PDSIM_DSIZE(Vardesc))
+pdsim_checksize(sizeof(Labeldesc), PDSIM_DSIZE(Labeldesc))
+pdsim_checksize(sizeof(LX), PDSIM_DSIZE(LX))
+pdsim_checksize(sizeof(LG), PDSIM_DSIZE(LG))
+pdsim_checksize(offsetof(CClosure, upvalue), PDSIM_DOFF_CCLOSURE)
+pdsim_checksize(offsetof(LClosure, upvals), PDSIM_DOFF_LCLOSURE)
+pdsim_checksize(offsetof(TString, contents), PDSIM_DOFF_TSTRING)
+pdsim_checksize(offsetof(Udata0, bindata), PDSIM_DOFF_UDATA0)
+pdsim_checksize(offsetof(Udata, uv), PDSIM_DOFF_UDATA)
+#endif
+
+
 
 #define fromstate(L)	(cast(LX *, cast(lu_byte *, (L)) - offsetof(LX, l)))
 
@@ -285,7 +322,7 @@ static void close_state (lua_State *L) {
   }
   luaM_freearray(L, G(L)->strt.hash, G(L)->strt.size);
   freestack(L);
-  lua_assert(gettotalbytes(g) == sizeof(LG));
+  lua_assert(gettotalbytes(g) == PDSIM_DSIZE(LG));  /* pdsim */
   (*g->frealloc)(g->ud, fromstate(L), sizeof(LG), 0);  /* free main block */
 }
 
@@ -297,7 +334,8 @@ LUA_API lua_State *lua_newthread (lua_State *L) {
   lua_lock(L);
   luaC_checkGC(L);
   /* create new thread */
-  o = luaC_newobjdt(L, LUA_TTHREAD, sizeof(LX), offsetof(LX, l));
+  o = luaC_newobjdt(L, LUA_TTHREAD, sizeof(LX), PDSIM_DSIZE(LX),
+                     offsetof(LX, l));
   L1 = gco2th(o);
   /* anchor it on L stack */
   setthvalue2s(L, L->top.p, L1);
@@ -402,7 +440,7 @@ LUA_API lua_State *lua_newstate (lua_Alloc f, void *ud) {
   g->gray = g->grayagain = NULL;
   g->weak = g->ephemeron = g->allweak = NULL;
   g->twups = NULL;
-  g->totalbytes = sizeof(LG);
+  g->totalbytes = PDSIM_DSIZE(LG);  /* pdsim: device size */
   g->GCdebt = 0;
   g->lastatomic = 0;
   setivalue(&g->nilvalue, 0);  /* to signal that state is not yet built */

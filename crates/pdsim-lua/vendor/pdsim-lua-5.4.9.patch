@@ -27,7 +27,79 @@
    if (l_unlikely(trap))
 --- a/lstate.c
 +++ b/lstate.c
-@@ -411,6 +411,11 @@
+@@ -47,6 +47,43 @@
+ } LG;
+ 
+ 
++/*
++** pdsim: on a 32-bit target (whose layout is the Playdate's), check the
++** device sizes in lstate.h against the real ones.
++*/
++#include <stdint.h>
++#if UINTPTR_MAX == 0xffffffffu
++#include "lparser.h"
++#define pdsim_checksize(x,dsz)	_Static_assert((dsz) == (x), #x);
++pdsim_checksize(sizeof(char), PDSIM_DSIZE(char))
++pdsim_checksize(sizeof(ls_byte), PDSIM_DSIZE(ls_byte))
++pdsim_checksize(sizeof(Instruction), PDSIM_DSIZE(Instruction))
++pdsim_checksize(sizeof(TValue), PDSIM_DSIZE(TValue))
++pdsim_checksize(sizeof(StackValue), PDSIM_DSIZE(StackValue))
++pdsim_checksize(sizeof(Node), PDSIM_DSIZE(Node))
++pdsim_checksize(sizeof(Table), PDSIM_DSIZE(Table))
++pdsim_checksize(sizeof(UpVal), PDSIM_DSIZE(UpVal))
++pdsim_checksize(sizeof(Proto), PDSIM_DSIZE(Proto))
++pdsim_checksize(sizeof(CallInfo), PDSIM_DSIZE(CallInfo))
++pdsim_checksize(sizeof(Upvaldesc), PDSIM_DSIZE(Upvaldesc))
++pdsim_checksize(sizeof(LocVar), PDSIM_DSIZE(LocVar))
++pdsim_checksize(sizeof(AbsLineInfo), PDSIM_DSIZE(AbsLineInfo))
++pdsim_checksize(sizeof(UValue), PDSIM_DSIZE(UValue))
++pdsim_checksize(sizeof(TString *), PDSIM_DSIZE(TString *))
++pdsim_checksize(sizeof(Proto *), PDSIM_DSIZE(Proto *))
++pdsim_checksize(sizeof(UpVal *), PDSIM_DSIZE(UpVal *))
++pdsim_checksize(sizeof(Vardesc), PDSIM_DSIZE(Vardesc))
++pdsim_checksize(sizeof(Labeldesc), PDSIM_DSIZE(Labeldesc))
++pdsim_checksize(sizeof(LX), PDSIM_DSIZE(LX))
++pdsim_checksize(sizeof(LG), PDSIM_DSIZE(LG))
++pdsim_checksize(offsetof(CClosure, upvalue), PDSIM_DOFF_CCLOSURE)
++pdsim_checksize(offsetof(LClosure, upvals), PDSIM_DOFF_LCLOSURE)
++pdsim_checksize(offsetof(TString, contents), PDSIM_DOFF_TSTRING)
++pdsim_checksize(offsetof(Udata0, bindata), PDSIM_DOFF_UDATA0)
++pdsim_checksize(offsetof(Udata, uv), PDSIM_DOFF_UDATA)
++#endif
++
++
+ 
+ #define fromstate(L)	(cast(LX *, cast(lu_byte *, (L)) - offsetof(LX, l)))
+ 
+@@ -285,7 +322,7 @@
+   }
+   luaM_freearray(L, G(L)->strt.hash, G(L)->strt.size);
+   freestack(L);
+-  lua_assert(gettotalbytes(g) == sizeof(LG));
++  lua_assert(gettotalbytes(g) == PDSIM_DSIZE(LG));  /* pdsim */
+   (*g->frealloc)(g->ud, fromstate(L), sizeof(LG), 0);  /* free main block */
+ }
+ 
+@@ -297,7 +334,8 @@
+   lua_lock(L);
+   luaC_checkGC(L);
+   /* create new thread */
+-  o = luaC_newobjdt(L, LUA_TTHREAD, sizeof(LX), offsetof(LX, l));
++  o = luaC_newobjdt(L, LUA_TTHREAD, sizeof(LX), PDSIM_DSIZE(LX),
++                     offsetof(LX, l));
+   L1 = gco2th(o);
+   /* anchor it on L stack */
+   setthvalue2s(L, L->top.p, L1);
+@@ -402,7 +440,7 @@
+   g->gray = g->grayagain = NULL;
+   g->weak = g->ephemeron = g->allweak = NULL;
+   g->twups = NULL;
+-  g->totalbytes = sizeof(LG);
++  g->totalbytes = PDSIM_DSIZE(LG);  /* pdsim: device size */
+   g->GCdebt = 0;
+   g->lastatomic = 0;
+   setivalue(&g->nilvalue, 0);  /* to signal that state is not yet built */
+@@ -411,6 +449,11 @@
    g->gcstepsize = LUAI_GCSTEPSIZE;
    setgcparam(g->genmajormul, LUAI_GENMAJORMUL);
    g->genminormul = LUAI_GENMINORMUL;
@@ -41,34 +113,188 @@
      /* memory allocation error: free partial state */
 --- a/lmem.c
 +++ b/lmem.c
-@@ -152,6 +152,7 @@
+@@ -95,7 +95,8 @@
+ 
+ 
+ void *luaM_growaux_ (lua_State *L, void *block, int nelems, int *psize,
+-                     int size_elems, int limit, const char *what) {
++                     int size_elems, int dsize_elems, int limit,
++                     const char *what) {
+   void *newblock;
+   int size = *psize;
+   if (nelems + 1 <= size)  /* does one extra element still fit? */
+@@ -113,7 +114,9 @@
+   lua_assert(nelems + 1 <= size && size <= limit);
+   /* 'limit' ensures that multiplication will not overflow */
+   newblock = luaM_saferealloc_(L, block, cast_sizet(*psize) * size_elems,
+-                                         cast_sizet(size) * size_elems);
++                                         cast_sizet(size) * size_elems,
++                                         cast_sizet(*psize) * dsize_elems,
++                                         cast_sizet(size) * dsize_elems);
+   *psize = size;  /* update only when everything else is OK */
+   return newblock;
+ }
+@@ -126,12 +129,14 @@
+ ** error.
+ */
+ void *luaM_shrinkvector_ (lua_State *L, void *block, int *size,
+-                          int final_n, int size_elem) {
++                          int final_n, int size_elem, int dsize_elem) {
+   void *newblock;
+   size_t oldsize = cast_sizet((*size) * size_elem);
+   size_t newsize = cast_sizet(final_n * size_elem);
+   lua_assert(newsize <= oldsize);
+-  newblock = luaM_saferealloc_(L, block, oldsize, newsize);
++  newblock = luaM_saferealloc_(L, block, oldsize, newsize,
++                               cast_sizet((*size) * dsize_elem),
++                               cast_sizet(final_n * dsize_elem));
+   *size = final_n;
+   return newblock;
+ }
+@@ -147,11 +152,12 @@
+ /*
+ ** Free memory
+ */
+-void luaM_free_ (lua_State *L, void *block, size_t osize) {
++void luaM_free_ (lua_State *L, void *block, size_t osize, size_t dosize) {
+   global_State *g = G(L);
    lua_assert((osize == 0) == (block == NULL));
    callfrealloc(g, block, osize, 0);
-   g->GCdebt -= osize;
-+  g->pdsim_freed += osize;  /* pdsim */
+-  g->GCdebt -= osize;
++  g->GCdebt -= dosize;  /* pdsim: device size */
++  g->pdsim_freed += dosize;  /* pdsim */
  }
  
  
-@@ -185,6 +186,8 @@
+@@ -173,7 +179,8 @@
+ /*
+ ** Generic allocation routine.
+ */
+-void *luaM_realloc_ (lua_State *L, void *block, size_t osize, size_t nsize) {
++void *luaM_realloc_ (lua_State *L, void *block, size_t osize, size_t nsize,
++                     size_t dosize, size_t dnsize) {
+   void *newblock;
+   global_State *g = G(L);
+   lua_assert((osize == 0) == (block == NULL));
+@@ -184,21 +191,24 @@
+       return NULL;  /* do not update 'GCdebt' */
    }
    lua_assert((nsize == 0) == (newblock == NULL));
-   g->GCdebt = (g->GCdebt + nsize) - osize;
-+  if (nsize > osize) g->pdsim_alloced += nsize - osize;  /* pdsim */
-+  else g->pdsim_freed += osize - nsize;
+-  g->GCdebt = (g->GCdebt + nsize) - osize;
++  g->GCdebt = (g->GCdebt + dnsize) - dosize;  /* pdsim: device sizes */
++  if (dnsize > dosize) g->pdsim_alloced += dnsize - dosize;  /* pdsim */
++  else g->pdsim_freed += dosize - dnsize;
    return newblock;
  }
  
-@@ -210,6 +213,7 @@
+ 
+ void *luaM_saferealloc_ (lua_State *L, void *block, size_t osize,
+-                                                    size_t nsize) {
+-  void *newblock = luaM_realloc_(L, block, osize, nsize);
++                                                    size_t nsize,
++                         size_t dosize, size_t dnsize) {
++  void *newblock = luaM_realloc_(L, block, osize, nsize, dosize, dnsize);
+   if (l_unlikely(newblock == NULL && nsize > 0))  /* allocation failed? */
+     luaM_error(L);
+   return newblock;
+ }
+ 
+ 
+-void *luaM_malloc_ (lua_State *L, size_t size, int tag) {
++void *luaM_malloc_ (lua_State *L, size_t size, size_t dsize, int tag) {
+   if (size == 0)
+     return NULL;  /* that's all */
+   else {
+@@ -209,7 +219,8 @@
+       if (newblock == NULL)
          luaM_error(L);
      }
-     g->GCdebt += size;
-+    g->pdsim_alloced += size;  /* pdsim */
+-    g->GCdebt += size;
++    g->GCdebt += dsize;  /* pdsim: device size */
++    g->pdsim_alloced += dsize;  /* pdsim */
      return newblock;
    }
  }
 --- a/lgc.c
 +++ b/lgc.c
-@@ -1646,6 +1646,7 @@
+@@ -50,7 +50,7 @@
+ ** The equivalent, in bytes, of one unit of "work" (visiting a slot,
+ ** sweeping an object, etc.)
+ */
+-#define WORK2MEM	sizeof(TValue)
++#define WORK2MEM	cast_sizet(PDSIM_DSIZE(TValue))  /* pdsim: device size */
+ 
+ 
+ /*
+@@ -255,9 +255,10 @@
+ ** create a new collectable object (with given type, size, and offset)
+ ** and link it to 'allgc' list.
+ */
+-GCObject *luaC_newobjdt (lua_State *L, int tt, size_t sz, size_t offset) {
++GCObject *luaC_newobjdt (lua_State *L, int tt, size_t sz, size_t dsz,
++                         size_t offset) {  /* pdsim: 'dsz' device size */
+   global_State *g = G(L);
+-  char *p = cast_charp(luaM_newobject(L, novariant(tt), sz));
++  char *p = cast_charp(luaM_newobject(L, novariant(tt), sz, dsz));
+   GCObject *o = cast(GCObject *, p + offset);
+   o->marked = luaC_white(g);
+   o->tt = tt;
+@@ -267,8 +268,8 @@
+ }
+ 
+ 
+-GCObject *luaC_newobj (lua_State *L, int tt, size_t sz) {
+-  return luaC_newobjdt(L, tt, sz, 0);
++GCObject *luaC_newobj (lua_State *L, int tt, size_t sz, size_t dsz) {
++  return luaC_newobjdt(L, tt, sz, dsz, 0);
+ }
+ 
+ /* }====================================================== */
+@@ -783,12 +784,14 @@
+       break;
+     case LUA_VLCL: {
+       LClosure *cl = gco2lcl(o);
+-      luaM_freemem(L, cl, sizeLclosure(cl->nupvalues));
++      luaM_freemem(L, cl, sizeLclosure(cl->nupvalues),
++                   pdsim_dsizeLclosure(cl->nupvalues));
+       break;
+     }
+     case LUA_VCCL: {
+       CClosure *cl = gco2ccl(o);
+-      luaM_freemem(L, cl, sizeCclosure(cl->nupvalues));
++      luaM_freemem(L, cl, sizeCclosure(cl->nupvalues),
++                   pdsim_dsizeCclosure(cl->nupvalues));
+       break;
+     }
+     case LUA_VTABLE:
+@@ -799,18 +802,23 @@
+       break;
+     case LUA_VUSERDATA: {
+       Udata *u = gco2u(o);
+-      luaM_freemem(L, o, sizeudata(u->nuvalue, u->len));
++      size_t ds;
++      memcpy(&ds, pdsim_udtrailer(u), sizeof(ds));
++      luaM_freemem(L, o, pdsim_sizeudata(u->nuvalue, u->len),
++                   pdsim_dsizeudata(u->nuvalue, ds));
+       break;
+     }
+     case LUA_VSHRSTR: {
+       TString *ts = gco2ts(o);
+       luaS_remove(L, ts);  /* remove it from hash table */
+-      luaM_freemem(L, ts, sizelstring(ts->shrlen));
++      luaM_freemem(L, ts, sizelstring(ts->shrlen),
++                   pdsim_dsizelstring(ts->shrlen));
+       break;
+     }
+     case LUA_VLNGSTR: {
+       TString *ts = gco2ts(o);
+-      luaM_freemem(L, ts, sizelstring(ts->u.lnglen));
++      luaM_freemem(L, ts, sizelstring(ts->u.lnglen),
++                   pdsim_dsizelstring(ts->u.lnglen));
+       break;
+     }
+     default: lua_assert(0);
+@@ -1646,6 +1654,7 @@
      default: lua_assert(0); return 0;
    }
    g->gcstopem = 0;
@@ -78,7 +304,7 @@
  
 --- a/lstate.h
 +++ b/lstate.h
-@@ -141,6 +141,24 @@
+@@ -141,6 +141,67 @@
  */
  #define EXTRA_STACK   5
  
@@ -100,10 +326,53 @@
 +/* pdsim: counts a call by game code to the C function 'f' (pdsim.c) */
 +LUAI_FUNC void pdsim_countcfunc (lua_State *L, lua_CFunction f);
 +
++/*
++** pdsim: memory is accounted (GCdebt/totalbytes, so GC pacing and
++** collectgarbage("count"), and the pdsim byte counters) at the object
++** sizes of the 32-bit Playdate (ARM32: 4-byte pointers, 8-byte aligned
++** double and long long), on every target, so the figures do not depend on
++** the host's pointer width. The allocator itself still gets real sizes.
++** 'pdsim_dsizeof(p)' is the device size of the type 'p' points to and
++** 'PDSIM_DSIZE(t)' that of type 't'; a type missing here is a compile
++** error. On a 32-bit target lstate.c checks every value against sizeof.
++*/
++union Vardesc; struct Labeldesc; struct LX; struct LG;  /* defined later */
++#define pdsim_dsizeof(p)	_Generic((p), \
++  char *: 1, ls_byte *: 1, Instruction *: 4, TValue *: 16, \
++  StackValue *: 16, Node *: 24, Table *: 32, UpVal *: 32, Proto *: 84, \
++  CallInfo *: 36, Upvaldesc *: 8, LocVar *: 12, AbsLineInfo *: 8, \
++  UValue *: 16, TString **: 4, Proto **: 4, UpVal **: 4, \
++  union Vardesc *: 24, struct Labeldesc *: 16, \
++  struct LX *: 120, struct LG *: 6024)
++#define PDSIM_DSIZE(t)	pdsim_dsizeof((t *)0)
++
++/* pdsim: device offsets of the variable parts of objects */
++#define PDSIM_DOFF_CCLOSURE	16  /* offsetof(CClosure, upvalue) */
++#define PDSIM_DOFF_LCLOSURE	16  /* offsetof(LClosure, upvals) */
++#define PDSIM_DOFF_TSTRING	16  /* offsetof(TString, contents) */
++#define PDSIM_DOFF_UDATA0	16  /* offsetof(Udata0, bindata) */
++#define PDSIM_DOFF_UDATA	24  /* offsetof(Udata, uv) */
++
++/* pdsim: device sizes of variable-size objects (cf. lfunc.h, lobject.h) */
++#define pdsim_dsizeCclosure(n)	(PDSIM_DOFF_CCLOSURE + PDSIM_DSIZE(TValue) * (n))
++#define pdsim_dsizeLclosure(n)	(PDSIM_DOFF_LCLOSURE + PDSIM_DSIZE(UpVal *) * (n))
++#define pdsim_dsizelstring(l)	(PDSIM_DOFF_TSTRING + ((l) + 1) * sizeof(char))
++#define pdsim_dsizeudata(nuv,nb)	(((nuv) == 0 ? PDSIM_DOFF_UDATA0 \
++  : PDSIM_DOFF_UDATA + PDSIM_DSIZE(UValue) * (nuv)) + (nb))
++
++/*
++** pdsim: a userdata's payload size is chosen by whoever creates it, so its
++** device size cannot be derived from the type. Each Udata block carries a
++** trailer (after the payload) holding the payload's device size, given to
++** pdsim_newuserdatauv; lua_newuserdatauv (host code, e.g. mlua) gives 0.
++*/
++#define pdsim_sizeudata(nuv,nb)	(sizeudata(nuv,nb) + sizeof(size_t))
++#define pdsim_udtrailer(u)	(cast_charp(u) + sizeudata((u)->nuvalue, (u)->len))
++
  
  #define BASIC_STACK_SIZE        (2*LUA_MINSTACK)
  
-@@ -267,6 +285,15 @@
+@@ -267,6 +328,15 @@
    lu_byte gckind;  /* kind of GC running */
    lu_byte gcstopem;  /* stops emergency collections */
    lu_byte genminormul;  /* control for minor generational collections */
@@ -130,3 +399,368 @@
    L->ci = ci = prepCallInfo(L, func, nresults, CIST_C,
                                 L->top.p + LUA_MINSTACK);
    lua_assert(ci->top.p <= L->stack_last.p);
+--- a/lmem.h
++++ b/lmem.h
+@@ -47,47 +47,65 @@
+ 
+ 
+ /*
++** pdsim: each size is passed twice, real and device (32-bit Playdate);
++** see 'PDSIM_DSIZE' in lstate.h. Macros taking a type 't' or a pointer
++** 'b' compute the device size themselves; their users must include
++** lstate.h.
++*/
++
++/*
+ ** Arrays of chars do not need any test
+ */
+ #define luaM_reallocvchar(L,b,on,n)  \
+-  cast_charp(luaM_saferealloc_(L, (b), (on)*sizeof(char), (n)*sizeof(char)))
+-
+-#define luaM_freemem(L, b, s)	luaM_free_(L, (b), (s))
+-#define luaM_free(L, b)		luaM_free_(L, (b), sizeof(*(b)))
+-#define luaM_freearray(L, b, n)   luaM_free_(L, (b), (n)*sizeof(*(b)))
++  cast_charp(luaM_saferealloc_(L, (b), (on)*sizeof(char), (n)*sizeof(char), \
++                               (on)*sizeof(char), (n)*sizeof(char)))
+ 
+-#define luaM_new(L,t)		cast(t*, luaM_malloc_(L, sizeof(t), 0))
+-#define luaM_newvector(L,n,t)	cast(t*, luaM_malloc_(L, (n)*sizeof(t), 0))
++#define luaM_freemem(L, b, s, ds)	luaM_free_(L, (b), (s), (ds))
++#define luaM_free(L, b)		luaM_free_(L, (b), sizeof(*(b)), pdsim_dsizeof(b))
++#define luaM_freearray(L, b, n)   luaM_free_(L, (b), (n)*sizeof(*(b)), \
++                                             (n)*pdsim_dsizeof(b))
++
++#define luaM_new(L,t)		cast(t*, luaM_malloc_(L, sizeof(t), PDSIM_DSIZE(t), 0))
++#define luaM_newvector(L,n,t)	cast(t*, luaM_malloc_(L, (n)*sizeof(t), \
++                                                  (n)*PDSIM_DSIZE(t), 0))
+ #define luaM_newvectorchecked(L,n,t) \
+   (luaM_checksize(L,n,sizeof(t)), luaM_newvector(L,n,t))
+ 
+-#define luaM_newobject(L,tag,s)	luaM_malloc_(L, (s), tag)
++#define luaM_newobject(L,tag,s,ds)	luaM_malloc_(L, (s), (ds), tag)
+ 
+ #define luaM_growvector(L,v,nelems,size,t,limit,e) \
+ 	((v)=cast(t *, luaM_growaux_(L,v,nelems,&(size),sizeof(t), \
+-                         luaM_limitN(limit,t),e)))
++                         PDSIM_DSIZE(t),luaM_limitN(limit,t),e)))
+ 
+ #define luaM_reallocvector(L, v,oldn,n,t) \
+    (cast(t *, luaM_realloc_(L, v, cast_sizet(oldn) * sizeof(t), \
+-                                  cast_sizet(n) * sizeof(t))))
++                                  cast_sizet(n) * sizeof(t), \
++                                  cast_sizet(oldn) * PDSIM_DSIZE(t), \
++                                  cast_sizet(n) * PDSIM_DSIZE(t))))
+ 
+ #define luaM_shrinkvector(L,v,size,fs,t) \
+-   ((v)=cast(t *, luaM_shrinkvector_(L, v, &(size), fs, sizeof(t))))
++   ((v)=cast(t *, luaM_shrinkvector_(L, v, &(size), fs, sizeof(t), \
++                                     PDSIM_DSIZE(t))))
+ 
+ LUAI_FUNC l_noret luaM_toobig (lua_State *L);
+ 
+ /* not to be called directly */
+ LUAI_FUNC void *luaM_realloc_ (lua_State *L, void *block, size_t oldsize,
+-                                                          size_t size);
++                                                          size_t size,
++                               size_t doldsize, size_t dsize);
+ LUAI_FUNC void *luaM_saferealloc_ (lua_State *L, void *block, size_t oldsize,
+-                                                              size_t size);
+-LUAI_FUNC void luaM_free_ (lua_State *L, void *block, size_t osize);
++                                                              size_t size,
++                                   size_t doldsize, size_t dsize);
++LUAI_FUNC void luaM_free_ (lua_State *L, void *block, size_t osize,
++                                                      size_t dosize);
+ LUAI_FUNC void *luaM_growaux_ (lua_State *L, void *block, int nelems,
+-                               int *size, int size_elem, int limit,
+-                               const char *what);
++                               int *size, int size_elem, int dsize_elem,
++                               int limit, const char *what);
+ LUAI_FUNC void *luaM_shrinkvector_ (lua_State *L, void *block, int *nelem,
+-                                    int final_n, int size_elem);
+-LUAI_FUNC void *luaM_malloc_ (lua_State *L, size_t size, int tag);
++                                    int final_n, int size_elem,
++                                    int dsize_elem);
++LUAI_FUNC void *luaM_malloc_ (lua_State *L, size_t size, size_t dsize,
++                                                         int tag);
+ 
+ #endif
+ 
+--- a/lgc.h
++++ b/lgc.h
+@@ -190,9 +190,11 @@
+ LUAI_FUNC void luaC_step (lua_State *L);
+ LUAI_FUNC void luaC_runtilstate (lua_State *L, int statesmask);
+ LUAI_FUNC void luaC_fullgc (lua_State *L, int isemergency);
+-LUAI_FUNC GCObject *luaC_newobj (lua_State *L, int tt, size_t sz);
++/* pdsim: 'dsz' is the object's device size (see 'PDSIM_DSIZE') */
++LUAI_FUNC GCObject *luaC_newobj (lua_State *L, int tt, size_t sz,
++                                               size_t dsz);
+ LUAI_FUNC GCObject *luaC_newobjdt (lua_State *L, int tt, size_t sz,
+-                                                 size_t offset);
++                                   size_t dsz, size_t offset);
+ LUAI_FUNC void luaC_barrier_ (lua_State *L, GCObject *o, GCObject *v);
+ LUAI_FUNC void luaC_barrierback_ (lua_State *L, GCObject *o);
+ LUAI_FUNC void luaC_checkfinalizer (lua_State *L, GCObject *o, Table *mt);
+--- a/lfunc.c
++++ b/lfunc.c
+@@ -25,7 +25,8 @@
+ 
+ 
+ CClosure *luaF_newCclosure (lua_State *L, int nupvals) {
+-  GCObject *o = luaC_newobj(L, LUA_VCCL, sizeCclosure(nupvals));
++  GCObject *o = luaC_newobj(L, LUA_VCCL, sizeCclosure(nupvals),
++                             pdsim_dsizeCclosure(nupvals));
+   CClosure *c = gco2ccl(o);
+   c->nupvalues = cast_byte(nupvals);
+   return c;
+@@ -33,7 +34,8 @@
+ 
+ 
+ LClosure *luaF_newLclosure (lua_State *L, int nupvals) {
+-  GCObject *o = luaC_newobj(L, LUA_VLCL, sizeLclosure(nupvals));
++  GCObject *o = luaC_newobj(L, LUA_VLCL, sizeLclosure(nupvals),
++                             pdsim_dsizeLclosure(nupvals));
+   LClosure *c = gco2lcl(o);
+   c->p = NULL;
+   c->nupvalues = cast_byte(nupvals);
+@@ -48,7 +50,8 @@
+ void luaF_initupvals (lua_State *L, LClosure *cl) {
+   int i;
+   for (i = 0; i < cl->nupvalues; i++) {
+-    GCObject *o = luaC_newobj(L, LUA_VUPVAL, sizeof(UpVal));
++    GCObject *o = luaC_newobj(L, LUA_VUPVAL, sizeof(UpVal),
++                               PDSIM_DSIZE(UpVal));
+     UpVal *uv = gco2upv(o);
+     uv->v.p = &uv->u.value;  /* make it closed */
+     setnilvalue(uv->v.p);
+@@ -63,7 +66,8 @@
+ ** open upvalues of 'L' after entry 'prev'.
+ **/
+ static UpVal *newupval (lua_State *L, StkId level, UpVal **prev) {
+-  GCObject *o = luaC_newobj(L, LUA_VUPVAL, sizeof(UpVal));
++  GCObject *o = luaC_newobj(L, LUA_VUPVAL, sizeof(UpVal),
++                               PDSIM_DSIZE(UpVal));
+   UpVal *uv = gco2upv(o);
+   UpVal *next = *prev;
+   uv->v.p = s2v(level);  /* current value lives in the stack */
+@@ -238,7 +242,8 @@
+ 
+ 
+ Proto *luaF_newproto (lua_State *L) {
+-  GCObject *o = luaC_newobj(L, LUA_VPROTO, sizeof(Proto));
++  GCObject *o = luaC_newobj(L, LUA_VPROTO, sizeof(Proto),
++                             PDSIM_DSIZE(Proto));
+   Proto *f = gco2p(o);
+   f->k = NULL;
+   f->sizek = 0;
+--- a/lstring.c
++++ b/lstring.c
+@@ -145,7 +145,7 @@
+   GCObject *o;
+   size_t totalsize;  /* total size of TString object */
+   totalsize = sizelstring(l);
+-  o = luaC_newobj(L, tag, totalsize);
++  o = luaC_newobj(L, tag, totalsize, pdsim_dsizelstring(l));
+   ts = gco2ts(o);
+   ts->hash = h;
+   ts->extra = 0;
+@@ -256,16 +256,18 @@
+ }
+ 
+ 
+-Udata *luaS_newudata (lua_State *L, size_t s, int nuvalue) {
++Udata *luaS_newudata (lua_State *L, size_t s, int nuvalue, size_t ds) {
+   Udata *u;
+   int i;
+   GCObject *o;
+-  if (l_unlikely(s > MAX_SIZE - udatamemoffset(nuvalue)))
++  if (l_unlikely(s > MAX_SIZE - udatamemoffset(nuvalue) - sizeof(size_t)))
+     luaM_toobig(L);
+-  o = luaC_newobj(L, LUA_VUSERDATA, sizeudata(nuvalue, s));
++  o = luaC_newobj(L, LUA_VUSERDATA, pdsim_sizeudata(nuvalue, s),
++                  pdsim_dsizeudata(nuvalue, ds));
+   u = gco2u(o);
+   u->len = s;
+   u->nuvalue = nuvalue;
++  memcpy(pdsim_udtrailer(u), &ds, sizeof(ds));
+   u->metatable = NULL;
+   for (i = 0; i < nuvalue; i++)
+     setnilvalue(&u->uv[i].uv);
+--- a/lstring.h
++++ b/lstring.h
+@@ -48,7 +48,8 @@
+ LUAI_FUNC void luaS_clearcache (global_State *g);
+ LUAI_FUNC void luaS_init (lua_State *L);
+ LUAI_FUNC void luaS_remove (lua_State *L, TString *ts);
+-LUAI_FUNC Udata *luaS_newudata (lua_State *L, size_t s, int nuvalue);
++LUAI_FUNC Udata *luaS_newudata (lua_State *L, size_t s, int nuvalue,
++                                size_t ds);
+ LUAI_FUNC TString *luaS_newlstr (lua_State *L, const char *str, size_t l);
+ LUAI_FUNC TString *luaS_new (lua_State *L, const char *str);
+ LUAI_FUNC TString *luaS_createlngstrobj (lua_State *L, size_t l);
+--- a/ltable.c
++++ b/ltable.c
+@@ -624,7 +624,8 @@
+ 
+ 
+ Table *luaH_new (lua_State *L) {
+-  GCObject *o = luaC_newobj(L, LUA_VTABLE, sizeof(Table));
++  GCObject *o = luaC_newobj(L, LUA_VTABLE, sizeof(Table),
++                             PDSIM_DSIZE(Table));
+   Table *t = gco2t(o);
+   t->metatable = NULL;
+   t->flags = cast_byte(maskflags);  /* table has no metamethod fields */
+--- a/lapi.c
++++ b/lapi.c
+@@ -1342,10 +1342,20 @@
+ 
+ 
+ LUA_API void *lua_newuserdatauv (lua_State *L, size_t size, int nuvalue) {
++  return pdsim_newuserdatauv(L, size, nuvalue, 0);
++}
++
++
++/*
++** pdsim: lua_newuserdatauv, with the payload's device (32-bit) size for
++** memory accounting. Host userdata (lua_newuserdatauv) count no payload.
++*/
++LUA_API void *pdsim_newuserdatauv (lua_State *L, size_t size, int nuvalue,
++                                   size_t dsize) {
+   Udata *u;
+   lua_lock(L);
+   api_check(L, 0 <= nuvalue && nuvalue < SHRT_MAX, "invalid value");
+-  u = luaS_newudata(L, size, nuvalue);
++  u = luaS_newudata(L, size, nuvalue, dsize);
+   setuvalue(L, s2v(L->top.p), u);
+   api_incr_top(L);
+   luaC_checkGC(L);
+--- a/lua.h
++++ b/lua.h
+@@ -268,6 +268,9 @@
+ 
+ LUA_API void  (lua_createtable) (lua_State *L, int narr, int nrec);
+ LUA_API void *(lua_newuserdatauv) (lua_State *L, size_t sz, int nuvalue);
++/* pdsim: as lua_newuserdatauv, giving the payload's device size */
++LUA_API void *(pdsim_newuserdatauv) (lua_State *L, size_t sz, int nuvalue,
++                                     size_t dsz);
+ LUA_API int   (lua_getmetatable) (lua_State *L, int objindex);
+ LUA_API int  (lua_getiuservalue) (lua_State *L, int idx, int n);
+ 
+--- a/luaconf.h
++++ b/luaconf.h
+@@ -771,8 +771,11 @@
+ /*
+ @@ LUAL_BUFFERSIZE is the initial buffer size used by the lauxlib
+ ** buffer system.
++** pdsim: fixed at the device (ARM32) value, 16 * sizeof(void*) *
++** sizeof(lua_Number) = 16 * 4 * 8, so buffers move to a heap box at the
++** same lengths on every target.
+ */
+-#define LUAL_BUFFERSIZE   ((int)(16 * sizeof(void*) * sizeof(lua_Number)))
++#define LUAL_BUFFERSIZE   512
+ 
+ 
+ /*
+--- a/lauxlib.c
++++ b/lauxlib.c
+@@ -472,6 +472,13 @@
+   size_t bsize;
+ } UBox;
+ 
++/* pdsim: device (ARM32) size of UBox, for memory accounting */
++#define PDSIM_DSIZE_UBOX	8
++#include <stdint.h>
++#if UINTPTR_MAX == 0xffffffffu
++_Static_assert(sizeof(UBox) == PDSIM_DSIZE_UBOX, "UBox");
++#endif
++
+ 
+ static void *resizebox (lua_State *L, int idx, size_t newsize) {
+   void *ud;
+@@ -516,7 +523,7 @@
+ 
+ 
+ static void newbox (lua_State *L) {
+-  UBox *box = (UBox *)lua_newuserdatauv(L, sizeof(UBox), 0);
++  UBox *box = (UBox *)pdsim_newuserdatauv(L, sizeof(UBox), 0, PDSIM_DSIZE_UBOX);
+   box->box = NULL;
+   box->bsize = 0;
+   getBoxMT(L);
+--- a/lstrlib.c
++++ b/lstrlib.c
+@@ -833,6 +833,13 @@
+   MatchState ms;  /* match state */
+ } GMatchState;
+ 
++/* pdsim: device (ARM32) size of GMatchState, for memory accounting */
++#define PDSIM_DSIZE_GMATCHSTATE	292
++#include <stdint.h>
++#if UINTPTR_MAX == 0xffffffffu
++_Static_assert(sizeof(GMatchState) == PDSIM_DSIZE_GMATCHSTATE, "GMatchState");
++#endif
++
+ 
+ static int gmatch_aux (lua_State *L) {
+   GMatchState *gm = (GMatchState *)lua_touserdata(L, lua_upvalueindex(3));
+@@ -857,7 +864,8 @@
+   size_t init = posrelatI(luaL_optinteger(L, 3, 1), ls) - 1;
+   GMatchState *gm;
+   lua_settop(L, 2);  /* keep strings on closure to avoid being collected */
+-  gm = (GMatchState *)lua_newuserdatauv(L, sizeof(GMatchState), 0);
++  gm = (GMatchState *)pdsim_newuserdatauv(L, sizeof(GMatchState), 0,
++                                            PDSIM_DSIZE_GMATCHSTATE);
+   if (init > ls)  /* start after string's end? */
+     init = ls + 1;  /* avoid overflows in 's + init' */
+   prepstate(&gm->ms, L, s, ls, p, lp);
+--- a/lmathlib.c
++++ b/lmathlib.c
+@@ -535,6 +535,13 @@
+   Rand64 s[4];
+ } RanState;
+ 
++/* pdsim: device (ARM32) size of RanState, for memory accounting */
++#define PDSIM_DSIZE_RANSTATE	32
++#include <stdint.h>
++#if UINTPTR_MAX == 0xffffffffu
++_Static_assert(sizeof(RanState) == PDSIM_DSIZE_RANSTATE, "RanState");
++#endif
++
+ 
+ /*
+ ** Project the random integer 'ran' into the interval [0, n].
+@@ -657,7 +664,8 @@
+ ** Register the random functions and initialize their state.
+ */
+ static void setrandfunc (lua_State *L) {
+-  RanState *state = (RanState *)lua_newuserdatauv(L, sizeof(RanState), 0);
++  RanState *state = (RanState *)pdsim_newuserdatauv(L, sizeof(RanState), 0,
++                                                PDSIM_DSIZE_RANSTATE);
+   randseed(L, state);  /* initialize with a "random" seed */
+   lua_pop(L, 2);  /* remove pushed seeds */
+   luaL_setfuncs(L, randfuncs, 1);
+--- a/liolib.c
++++ b/liolib.c
+@@ -154,6 +154,13 @@
+ 
+ typedef luaL_Stream LStream;
+ 
++/* pdsim: device (ARM32) size of LStream, for memory accounting */
++#define PDSIM_DSIZE_LSTREAM	8
++#include <stdint.h>
++#if UINTPTR_MAX == 0xffffffffu
++_Static_assert(sizeof(LStream) == PDSIM_DSIZE_LSTREAM, "LStream");
++#endif
++
+ 
+ #define tolstream(L)	((LStream *)luaL_checkudata(L, 1, LUA_FILEHANDLE))
+ 
+@@ -199,7 +206,8 @@
+ ** handle is in a consistent state.
+ */
+ static LStream *newprefile (lua_State *L) {
+-  LStream *p = (LStream *)lua_newuserdatauv(L, sizeof(LStream), 0);
++  LStream *p = (LStream *)pdsim_newuserdatauv(L, sizeof(LStream), 0,
++                                            PDSIM_DSIZE_LSTREAM);
+   p->closef = NULL;  /* mark file handle as 'closed' */
+   luaL_setmetatable(L, LUA_FILEHANDLE);
+   return p;

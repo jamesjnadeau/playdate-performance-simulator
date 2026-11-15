@@ -149,7 +149,7 @@ impl Game for LuaGame {
             self.ctx.dev().stopped = Some(msg.clone());
             return Err(GameError(msg));
         }
-        let heap = self.lua.used_memory() as u64;
+        let heap = crate::vm::heap_bytes(&self.lua);
         let stats = self.ctx.dev().end_frame(heap);
         if let Ok(p) = self.lua.globals().get::<Table>("playdate") {
             let fps = if stats.frame_ms > 0.0 {

@@ -50,7 +50,7 @@
 ** The equivalent, in bytes, of one unit of "work" (visiting a slot,
 ** sweeping an object, etc.)
 */
-#define WORK2MEM	sizeof(TValue)
+#define WORK2MEM	cast_sizet(PDSIM_DSIZE(TValue))  /* pdsim: device size */
 
 
 /*
@@ -255,9 +255,10 @@ void luaC_fix (lua_State *L, GCObject *o) {
 ** create a new collectable object (with given type, size, and offset)
 ** and link it to 'allgc' list.
 */
-GCObject *luaC_newobjdt (lua_State *L, int tt, size_t sz, size_t offset) {
+GCObject *luaC_newobjdt (lua_State *L, int tt, size_t sz, size_t dsz,
+                         size_t offset) {  /* pdsim: 'dsz' device size */
   global_State *g = G(L);
-  char *p = cast_charp(luaM_newobject(L, novariant(tt), sz));
+  char *p = cast_charp(luaM_newobject(L, novariant(tt), sz, dsz));
   GCObject *o = cast(GCObject *, p + offset);
   o->marked = luaC_white(g);
   o->tt = tt;
@@ -267,8 +268,8 @@ GCObject *luaC_newobjdt (lua_State *L, int tt, size_t sz, size_t offset) {
 }
 
 
-GCObject *luaC_newobj (lua_State *L, int tt, size_t sz) {
-  return luaC_newobjdt(L, tt, sz, 0);
+GCObject *luaC_newobj (lua_State *L, int tt, size_t sz, size_t dsz) {
+  return luaC_newobjdt(L, tt, sz, dsz, 0);
 }
 
 /* }====================================================== */
@@ -783,12 +784,14 @@ static void freeobj (lua_State *L, GCObject *o) {
       break;
     case LUA_VLCL: {
       LClosure *cl = gco2lcl(o);
-      luaM_freemem(L, cl, sizeLclosure(cl->nupvalues));
+      luaM_freemem(L, cl, sizeLclosure(cl->nupvalues),
+                   pdsim_dsizeLclosure(cl->nupvalues));
       break;
     }
     case LUA_VCCL: {
       CClosure *cl = gco2ccl(o);
-      luaM_freemem(L, cl, sizeCclosure(cl->nupvalues));
+      luaM_freemem(L, cl, sizeCclosure(cl->nupvalues),
+                   pdsim_dsizeCclosure(cl->nupvalues));
       break;
     }
     case LUA_VTABLE:
@@ -799,18 +802,23 @@ static void freeobj (lua_State *L, GCObject *o) {
       break;
     case LUA_VUSERDATA: {
       Udata *u = gco2u(o);
-      luaM_freemem(L, o, sizeudata(u->nuvalue, u->len));
+      size_t ds;
+      memcpy(&ds, pdsim_udtrailer(u), sizeof(ds));
+      luaM_freemem(L, o, pdsim_sizeudata(u->nuvalue, u->len),
+                   pdsim_dsizeudata(u->nuvalue, ds));
       break;
     }
     case LUA_VSHRSTR: {
       TString *ts = gco2ts(o);
       luaS_remove(L, ts);  /* remove it from hash table */
-      luaM_freemem(L, ts, sizelstring(ts->shrlen));
+      luaM_freemem(L, ts, sizelstring(ts->shrlen),
+                   pdsim_dsizelstring(ts->shrlen));
       break;
     }
     case LUA_VLNGSTR: {
       TString *ts = gco2ts(o);
-      luaM_freemem(L, ts, sizelstring(ts->u.lnglen));
+      luaM_freemem(L, ts, sizelstring(ts->u.lnglen),
+                   pdsim_dsizelstring(ts->u.lnglen));
       break;
     }
     default: lua_assert(0);

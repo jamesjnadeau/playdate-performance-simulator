@@ -442,3 +442,28 @@ fn lua_errors_cross_rust_frames() {
     let err = game.frame(None).unwrap_err();
     assert!(err.0.contains("boom"), "{}", err.0);
 }
+
+#[test]
+fn lua_heap_is_luas_own_count() {
+    // The heap reading is Lua's own (device-size) count, not the bytes the
+    // host allocator handed out.
+    let t = TempGame::new(
+        "heap",
+        r#"
+        keep = {}
+        function playdate.update()
+            for i = 1, 100 do keep[#keep + 1] = {i} end
+        end
+        "#,
+    );
+    let mut g = t.load();
+    let count: mlua::Function = g
+        .lua()
+        .load("return collectgarbage('count') * 1024")
+        .into_function()
+        .unwrap();
+    for _ in 0..3 {
+        let f = g.frame(None).unwrap();
+        assert_eq!(f.memory.lua_heap, count.call::<u64>(()).unwrap());
+    }
+}

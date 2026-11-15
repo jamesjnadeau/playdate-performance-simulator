@@ -1342,10 +1342,20 @@ void lua_warning (lua_State *L, const char *msg, int tocont) {
 
 
 LUA_API void *lua_newuserdatauv (lua_State *L, size_t size, int nuvalue) {
+  return pdsim_newuserdatauv(L, size, nuvalue, 0);
+}
+
+
+/*
+** pdsim: lua_newuserdatauv, with the payload's device (32-bit) size for
+** memory accounting. Host userdata (lua_newuserdatauv) count no payload.
+*/
+LUA_API void *pdsim_newuserdatauv (lua_State *L, size_t size, int nuvalue,
+                                   size_t dsize) {
   Udata *u;
   lua_lock(L);
   api_check(L, 0 <= nuvalue && nuvalue < SHRT_MAX, "invalid value");
-  u = luaS_newudata(L, size, nuvalue);
+  u = luaS_newudata(L, size, nuvalue, dsize);
   setuvalue(L, s2v(L->top.p), u);
   api_incr_top(L);
   luaC_checkGC(L);

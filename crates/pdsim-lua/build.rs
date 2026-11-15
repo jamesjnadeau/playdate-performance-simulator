@@ -45,6 +45,10 @@ fn main() {
             println!("cargo:rerun-if-changed={}", p.display());
         }
     }
+    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+        // The device-size table in lstate.h uses C11 _Generic.
+        b.flag("/std:c11");
+    }
     if target_os == "emscripten" {
         // Must match the link-time -sSUPPORT_LONGJMP in .cargo/config.toml.
         b.flag("-sSUPPORT_LONGJMP=wasm");
