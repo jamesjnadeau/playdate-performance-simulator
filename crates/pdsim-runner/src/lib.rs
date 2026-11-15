@@ -112,7 +112,7 @@ impl RunConfig {
 impl Default for RunConfig {
     fn default() -> Self {
         RunConfig {
-            calibration: Calibration::default_estimates(),
+            calibration: Calibration::builtin(),
             data_dir: None,
             sdk: Device::sdk_from_env(),
             profile: true,

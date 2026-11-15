@@ -16,8 +16,9 @@ turns the frame's cycles into device time:
 equivalents read this clock (including work done so far in the frame), so
 games that measure themselves see device time.
 
-The costs come from a `Calibration` profile (`calibration/default.json` or a
-fitted file): per-opcode Lua costs, per-instruction-class ARM costs, a
+The costs come from a `Calibration` profile (built in: `calibration/rev-a.json`,
+fitted from device benchmarks; `calibration/default.json` holds the
+hand-written estimates the fit starts from): per-opcode Lua costs, per-instruction-class ARM costs, a
 `base + per_pixel + per_row + per_byte + per_item` model per API function,
 and the display transfer cost.
 

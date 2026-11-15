@@ -1,9 +1,11 @@
 # Calibrating against a real Playdate
 
-The simulator charges every operation a cost in device cycles. Until you
-calibrate, it uses the built-in estimates in `calibration/default.json`, and
-every report says **ESTIMATED**. Calibrating fits those costs to timings from
-your own device.
+The simulator charges every operation a cost in device cycles. The built-in
+profile, `calibration/rev-a.json`, was fitted with the steps below on a Rev A
+device. Calibrating your own device (a Rev B, or to check the Rev A fit)
+fits those costs to its timings. The hand-written estimates the fit starts
+from are in `calibration/default.json`; a profile marked `"estimated": true`
+makes reports say **ESTIMATED**.
 
 ## How it works
 
@@ -80,12 +82,14 @@ cannot tell apart keep their prior) and costs kept non-negative.
 5. Use the profile:
 
    ```bash
-   cargo run -p pdsim-cli -- run my-game --calibration calibration/rev-a.json
+   cargo run -p pdsim-cli -- run my-game --calibration calibration/rev-b.json
    ```
 
-   In the app, enter the profile's path in the calibration field before
-   opening the game. Please consider contributing `rev-a.json`/`rev-b.json`
-   back.
+   In the desktop app, enter the profile's path in the calibration field
+   before opening the game (the browser build always uses the built-in
+   profile). Please consider contributing a `rev-b.json`, or a refit of
+   `rev-a.json`, back. A profile becomes the built-in default by changing
+   `BUILTIN_CALIBRATION_JSON` in `crates/pdsim-core/src/calibration.rs`.
 
 Rev A and Rev B devices differ (CPU revision and memory), so fit each
 separately and pass `--device rev-b` for a Rev B.

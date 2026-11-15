@@ -30,7 +30,7 @@ Games run from source: PNG images and `.fnt` fonts, not a compiled `.pdx`.
 | `--trace FILE` | none | Write a Chrome/Perfetto trace in device time (open in `ui.perfetto.dev` or `chrome://tracing`). |
 | `--frames-out FILE` | none | Write [per-frame stats](#per-frame-stats-jsonl) as JSON lines. |
 | `--screenshot FILE` | none | Save the last frame as a 400×240 PNG. |
-| `--calibration FILE` | built-in estimates | Calibration profile, e.g. `calibration/rev-a.json`. |
+| `--calibration FILE` | built-in (`calibration/rev-a.json`) | Calibration profile, e.g. your own `rev-b.json`, or `calibration/default.json` for the unfitted estimates. |
 | `--data-dir DIR` | `$TMPDIR/pdsim-data/<game>` | Where the game's saved data lives (`playdate.datastore`, `playdate.file` writes). Reads look here first, then in the game folder. |
 | `--sdk DIR` | `$PLAYDATE_SDK_PATH` | Playdate SDK, for CoreLibs, the system font and (C games) `pd_api.h`. |
 | `--cpu unicorn\|thumb` | `unicorn` if built in, else `thumb` | CPU emulator for C games. `thumb` is the pure-Rust interpreter and needs a build with `--features thumb`, and `unicorn` needs `--features unicorn` (an alias for the default `c-games`); both give byte-identical reports. Asking for a backend this build lacks prints `pdsim: this build has no <name> CPU (rebuild with --features <name>)` and exits 2. |
@@ -51,13 +51,13 @@ Games run from source: PNG images and `.fnt` fonts, not a compiled `.pdx`.
 Summary example:
 
 ```text
-300 frames, 10666.7 ms device time, budget 33.33 ms (ESTIMATED calibration)
-work avg 11.56 ms  p50 9.26  p95 9.26  max 159.38 (frame 299)
-over budget: 5 frames, dropped refreshes: 20, effective fps 28.1
-avg per category (ms): lua 9.79, gfx 0.57, gc 0.58, display 0.62
-peak memory: 5026.7 KB
+300 frames, 32300.0 ms device time, budget 33.33 ms
+work avg 85.30 ms  p50 44.06  p95 44.06  max 2566.40 (frame 179)
+over budget: 300 frames, dropped refreshes: 669, effective fps 9.3
+avg per category (ms): lua 71.69, gfx 5.43, gc 7.55, display 0.62
+peak memory: 3890.2 KB
 hotspots (self cycles):
-     389308366  physics main.lua:46
+    1841520977  physics main.lua:46
 ```
 
 - **work** is the time the CPU was busy in a frame. **budget** is one
@@ -66,9 +66,9 @@ hotspots (self cycles):
 - A frame whose work exceeds the budget is **over budget** and holds the
   screen for an extra refresh period; each missed refresh is a **dropped
   refresh**.
-- `(ESTIMATED calibration)` means absolute times come from the built-in
-  estimates. Compare relative numbers until you
-  [calibrate](calibration.md).
+- `(ESTIMATED calibration)` appears when the profile is not device-fitted
+  (such as `calibration/default.json`). Then compare relative numbers until
+  you [calibrate](calibration.md).
 
 ### Input scripts
 
@@ -152,5 +152,6 @@ app with `?backend=ws` (or `?ws=ws://host:port`) to use this server. See
 
 ## `pdsim default-calibration`
 
-Prints the built-in profile as JSON: a starting point for hand-edited or
-fitted profiles.
+Prints the built-in profile (`calibration/rev-a.json`) as JSON: a starting
+point for hand-edited profiles. `fit-calibration` starts from the estimates in
+`calibration/default.json` instead.

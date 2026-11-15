@@ -77,14 +77,12 @@ what moves the player, then write a script. If the game reads no input
 
 ## 4. Pick a profile
 
-The built-in profile is a rough estimate (the summary says ESTIMATED). It
-can be off by 5x or more on Lua-heavy frames, enough to flip "a few
-stutters" into "never reaches 30 fps". Use a fitted profile whenever one
-exists: `ls calibration/*.json` (`default.json` is the estimate;
-`rev-a.json` is fitted to a Rev A device). Profiles are per hardware
-revision. If you don't know the user's revision, run with each available
-profile and report both, naming which is which. With no fitted profile
-for their revision, say that absolute times are unverified.
+The built-in profile is `calibration/rev-a.json`, fitted to a Rev A device
+(no flag needed). Profiles are per hardware revision: `ls calibration/*.json`
+for others (`default.json` is the unfitted estimate, off by 5x or more on
+Lua-heavy frames; never use it for absolute numbers). If the user has a
+Rev B and no `rev-b.json` exists, say that absolute times are unverified for
+their device.
 
 ## 5. Run and confirm the scene
 

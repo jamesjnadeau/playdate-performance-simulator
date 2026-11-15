@@ -50,14 +50,15 @@ cargo run --release -p pdsim-cli -- run examples/lua-stress --frames 300
 ```
 
 ```text
-300 frames, 10666.7 ms device time, budget 33.33 ms (ESTIMATED calibration)
-work avg 11.56 ms  p50 9.26  p95 9.26  max 159.38 (frame 299)
-over budget: 5 frames, dropped refreshes: 20, effective fps 28.1
-avg per category (ms): lua 9.79, gfx 0.57, gc 0.58, display 0.62
+300 frames, 32300.0 ms device time, budget 33.33 ms
+work avg 85.30 ms  p50 44.06  p95 44.06  max 2566.40 (frame 179)
+over budget: 300 frames, dropped refreshes: 669, effective fps 9.3
+avg per category (ms): lua 71.69, gfx 5.43, gc 7.55, display 0.62
+peak memory: 3890.2 KB
 hotspots (self cycles):
-     389308366  physics main.lua:46
-      87018694  spike main.lua:54
-      29067650  [gc]
+    1841520977  physics main.lua:46
+    1697887532  spike main.lua:54
+     380610993  [gc]
       20930306  [sprite.update]
 ```
 
@@ -112,7 +113,7 @@ pdsim run <game-dir | Source/ | pdex.elf>
     --trace out.json         Chrome/Perfetto trace (device time)
     --frames-out f.jsonl     per-frame stats
     --screenshot out.png     last frame
-    --calibration prof.json  calibrated profile (default: built-in estimates)
+    --calibration prof.json  calibration profile (default: built-in Rev A fit)
     --data-dir DIR           the game's saved data (default: a temp folder)
     --sdk DIR                Playdate SDK (default: $PLAYDATE_SDK_PATH)
     --max-over-budget N      fail if more than N frames go over budget
@@ -142,12 +143,14 @@ your own game (input scripts, reading hotspots, CI limits), see
 
 ## Accuracy
 
-**Until you calibrate, the numbers are estimates** (reports say so). The
-cost model's structure is right — the same work always costs the same, more
-work costs proportionally more, and hot paths rank correctly — but absolute
-times depend on the per-unit costs. See [docs/calibration.md](docs/calibration.md)
-to fit them to your device in a few minutes, and
-[docs/accuracy.md](docs/accuracy.md) for what is and isn't modeled.
+The built-in costs are fitted to a **Rev A** Playdate: the device
+benchmarks match within 3.5% on average, though whole games have not yet
+been checked against the device. The cost model's structure holds either
+way — the same work always costs the same, more work costs proportionally
+more, and hot paths rank correctly. On a Rev B, or to check the fit, see
+[docs/calibration.md](docs/calibration.md) to fit the costs to your own
+device, and [docs/accuracy.md](docs/accuracy.md) for what is and isn't
+modeled.
 
 ## Layout
 
@@ -162,7 +165,7 @@ to fit them to your device in a few minutes, and
 | `crates/pdsim-session` | a game on its own thread with pacing, for UIs |
 | `crates/pdsim-cli` | `pdsim` headless runner and WebSocket server |
 | `app/` | Tauri v2 desktop app (TypeScript + Vite) |
-| `calibration/` | built-in estimates and the device bench projects |
+| `calibration/` | the built-in Rev A profile, the estimates it was fitted from, and the device bench projects |
 | `tools/fit-calibration` | fits a profile to device timings |
 | `.claude/skills/playdate-perf-test` | skill for AI agents that test a game's performance with this repo |
 | `examples/` | Lua and C samples with known hot paths |

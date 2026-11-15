@@ -89,7 +89,7 @@ fn main() -> Result<()> {
         Cmd::Run(a) => run(*a),
         Cmd::Serve { game, port } => serve(game, port),
         Cmd::DefaultCalibration => {
-            println!("{}", Calibration::default_estimates().to_json());
+            println!("{}", Calibration::builtin().to_json());
             Ok(())
         }
     }
@@ -98,7 +98,7 @@ fn main() -> Result<()> {
 fn run(a: RunArgs) -> Result<()> {
     let calibration = match &a.calibration {
         Some(p) => Calibration::load(p).with_context(|| format!("loading {}", p.display()))?,
-        None => Calibration::default_estimates(),
+        None => Calibration::builtin(),
     };
     let script = match &a.input {
         Some(p) => Some(

@@ -99,7 +99,7 @@ Over-budget frames are what players see as stutter.
    - `gc`: allocation and garbage collection. High `gc` means the frame
      allocates many short-lived tables, strings or closures.
    - `display`: transferring changed rows to the screen; at most ~0.6 ms
-     with the estimates, so it only matters at 50 fps.
+     (display costs are not yet calibrated), so it only matters at 50 fps.
    - `c`: native code in C games.
    - `io`: file and datastore access.
 
@@ -120,12 +120,10 @@ Change one thing, rerun the same script and compare:
 jq '{avg_work_ms, p95_work_ms, max_work_ms, over_budget_frames, avg_category_ms}' before.json after.json
 ```
 
-With the estimated profile, trust **relative** changes (this version is
-30% faster, this frame is the worst, this function dominates) more than
-absolute milliseconds, which can be off by several times on Lua-heavy
-frames. For absolute numbers, pass a fitted profile (`--calibration
-calibration/rev-a.json` for a Rev A device) or [calibrate](calibration.md)
-against your own.
+The built-in profile is fitted to a Rev A device. Relative changes (this
+version is 30% faster, this frame is the worst, this function dominates)
+are the most reliable numbers; absolute milliseconds are close on a Rev A
+but unverified on a Rev B until you [calibrate](calibration.md) one.
 
 ## 6. Guard it in CI
 
@@ -136,8 +134,7 @@ pdsim run MyGame --frames 900 --input level1.json -q \
 
 The command exits 1 when a limit is exceeded or the game raises an error,
 so it can gate a pull request. Keep `perf.json` as a build artifact to see
-what changed. Give the limits some headroom when using the estimated
-profile.
+what changed. Give the limits some headroom, more so on a Rev B.
 
 ## Watching it live
 

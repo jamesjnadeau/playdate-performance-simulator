@@ -394,9 +394,12 @@ mod tests {
         let s = Session::spawn(move |v| ev.lock().unwrap().push(v));
         s.send(Command::BreakOnOverBudget { on: true });
         s.send(Command::SetMode { mode: "turbo".into() });
+        // The estimates keep lua-stress under budget until its frame-59
+        // spike; under the fitted profile every frame is over.
+        let estimates = concat!(env!("CARGO_MANIFEST_DIR"), "/../../calibration/default.json");
         s.send(Command::Load {
             path: example(),
-            calibration: None,
+            calibration: Some(estimates.into()),
             data_dir: None,
             sdk: None,
         });

@@ -81,7 +81,7 @@ impl SessionCore {
             next_frame_ms: 0.0,
             log_sent: 0,
             path: None,
-            calibration: Calibration::default_estimates(),
+            calibration: Calibration::builtin(),
             loaded_event: None,
         }
     }
@@ -260,7 +260,7 @@ impl SessionCore {
                 Ok(c) => c,
                 Err(e) => return self.error(format!("calibration {p}: {e}")),
             },
-            None => Calibration::default_estimates(),
+            None => Calibration::builtin(),
         };
         let mut cfg = pdsim_runner::RunConfig {
             calibration: cal.clone(),

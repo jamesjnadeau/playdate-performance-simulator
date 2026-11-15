@@ -1,15 +1,17 @@
 //! Calibration profiles: the per-unit device costs the simulator charges.
 //!
-//! A profile is a JSON file. The built-in [`Calibration::default_estimates`]
-//! are educated guesses; `tools/fit-calibration` produces a fitted profile
-//! from benchmark runs on a real device.
+//! A profile is a JSON file. [`Calibration::builtin`] (used by default) was
+//! fitted by `tools/fit-calibration` from benchmark runs on a Rev A device;
+//! [`Calibration::default_estimates`] are the educated guesses it started from.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
 
-/// The built-in estimates, used until device data exists.
+/// The hand-written estimates, the fitter's starting point.
 pub const DEFAULT_CALIBRATION_JSON: &str = include_str!("../../../calibration/default.json");
+/// The profile used by default, fitted from Rev A device benchmarks.
+pub const BUILTIN_CALIBRATION_JSON: &str = include_str!("../../../calibration/rev-a.json");
 
 /// Errors loading a calibration profile.
 #[derive(Debug, thiserror::Error)]
@@ -170,12 +172,18 @@ impl ApiCost {
 
 impl Default for Calibration {
     fn default() -> Self {
-        Self::default_estimates()
+        Self::builtin()
     }
 }
 
 impl Calibration {
-    /// The built-in estimated profile.
+    /// The profile used when none is given: fitted from Rev A device runs.
+    pub fn builtin() -> Self {
+        Self::from_json(BUILTIN_CALIBRATION_JSON).expect("built-in calibration is valid")
+    }
+
+    /// The hand-written estimates (`calibration/default.json`): the prior
+    /// that `fit-calibration` starts from.
     pub fn default_estimates() -> Self {
         Self::from_json(DEFAULT_CALIBRATION_JSON).expect("built-in calibration is valid")
     }
@@ -280,6 +288,15 @@ mod tests {
         assert!(c.lua_opcode("MOVE") > 0.0);
         assert_eq!(c.lua_opcode("NOT_AN_OPCODE"), c.lua.default_opcode);
         assert!(c.api.contains_key("graphics.fillRect"));
+    }
+
+    #[test]
+    fn builtin_profile_is_fitted() {
+        let c = Calibration::builtin();
+        assert!(!c.estimated);
+        assert_eq!(c.cpu_hz, 168_000_000);
+        assert!(c.api.contains_key("graphics.fillRect"));
+        assert_eq!(Calibration::default().name, c.name);
     }
 
     #[test]
