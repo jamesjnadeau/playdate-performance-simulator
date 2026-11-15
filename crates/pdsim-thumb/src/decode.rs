@@ -9,6 +9,7 @@
 //! runs.
 
 use crate::mem::{Mem, PAGE};
+use crate::tcg::{Budget, MAX_INSNS};
 use pdsim_cpu::CpuError;
 
 /// When a data-processing instruction sets the flags.
@@ -568,6 +569,10 @@ pub struct Block {
     pub ops: Vec<Op>,
     /// Bytes from the first instruction to the end of the last.
     pub size: u32,
+    /// ITSTATE and CONTROL.FPCA at the start, which QEMU keys its blocks
+    /// by and which change how many TCG ops the block takes.
+    pub it: u8,
+    pub fpca: bool,
 }
 
 /// Whether a halfword starts a 32-bit instruction.
@@ -1772,9 +1777,10 @@ impl K {
 /// region. It ends after the first instruction that ends a QEMU
 /// translation block, before an instruction QEMU would put in the next
 /// page's block, or before an instruction that can't be fetched.
-pub fn block_at(mem: &Mem, addr: u32) -> Result<Block, CpuError> {
+pub fn block_at(mem: &Mem, addr: u32, it: u8, fpca: bool) -> Result<Block, CpuError> {
     let page = addr & !(PAGE - 1);
     let mut ops = Vec::new();
+    let mut budget = Budget::new(it, fpca);
     let mut pc = addr;
     loop {
         let first = ops.is_empty();
@@ -1805,6 +1811,11 @@ pub fn block_at(mem: &Mem, addr: u32) -> Result<Block, CpuError> {
         if op.k.ends_block() {
             break;
         }
+        // translator_loop: the op buffer is full, or the instruction limit.
+        budget.add(&op);
+        if budget.full() || ops.len() >= MAX_INSNS {
+            break;
+        }
         let off = pc.wrapping_sub(page);
         if off >= PAGE {
             break;
@@ -1816,6 +1827,8 @@ pub fn block_at(mem: &Mem, addr: u32) -> Result<Block, CpuError> {
     Ok(Block {
         size: pc.wrapping_sub(addr),
         ops,
+        it,
+        fpca,
     })
 }
 

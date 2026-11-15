@@ -14,6 +14,7 @@
 pub mod decode;
 mod exec;
 mod mem;
+pub mod tcg;
 mod vfp;
 
 use decode::Block;
@@ -56,6 +57,11 @@ pub struct ThumbCpu {
     /// CONTROL.FPCA: set by the first floating-point instruction, which
     /// also starts FPSCR from zero (QEMU's lazy FP state).
     pub(crate) fpca: bool,
+    /// The translator's view of FPCA in the running block: set by the
+    /// first floating-point instruction even when its IT condition fails,
+    /// so a later one in the same block does not create a new FP context
+    /// (QEMU clears `v7m_new_fp_ctxt_needed` at translation time).
+    pub(crate) tb_fpca: bool,
     pub(crate) primask: bool,
     pub(crate) faultmask: bool,
     pub(crate) basepri: u8,
@@ -103,6 +109,7 @@ impl ThumbCpu {
             s: [0; 32],
             fpscr: 0,
             fpca: false,
+            tb_fpca: false,
             primask: false,
             faultmask: false,
             basepri: 0,
@@ -146,9 +153,11 @@ impl ThumbCpu {
     /// The block at `pc` in code area `i`, decoded and cached if needed.
     fn block(&mut self, i: usize, pc: u32) -> Result<Rc<Block>, CpuError> {
         if let Some(b) = self.mem.cached(i, pc) {
-            return Ok(b);
+            if b.it == self.it && b.fpca == self.fpca {
+                return Ok(b);
+            }
         }
-        let b = Rc::new(decode::block_at(&self.mem, pc)?);
+        let b = Rc::new(decode::block_at(&self.mem, pc, self.it, self.fpca)?);
         self.mem.cache(i, pc, b.clone());
         Ok(b)
     }
@@ -226,6 +235,7 @@ impl ThumbCpu {
                         self.r[15] = pc;
                         return Ok(());
                     }
+                    self.tb_fpca = self.fpca;
                     for op in &block.ops[..n] {
                         self.exec(op).map_err(|e| self.deferred_exit(e))?;
                     }
@@ -240,6 +250,7 @@ impl ThumbCpu {
                         continue;
                     }
                     let op = decode::one_at(&self.mem, pc).map_err(Exit::Fault)?;
+                    self.tb_fpca = self.fpca;
                     self.exec(&op).map_err(|e| self.deferred_exit(e))?;
                     self.end_block()?;
                 }

@@ -191,6 +191,76 @@ fn targeted_scenarios_match_unicorn() {
         );
     }
 
+    // QEMU also ends a block when its TCG op buffer fills (4000 ops), which
+    // long straight-line runs reach before the page end.
+    let rep = |n: usize, insns: &[u16]| insns.repeat(n);
+    let r1_data = |c: &mut dyn Cpu<St>| {
+        for r in 0..13 {
+            c.reg_write(Reg::R(r), D + 0x1000);
+        }
+    };
+    for (name, code) in [
+        ("adds x3000", rep(3000, &[0x1840])),
+        ("str ldr x1500", rep(1500, &[0x6008, 0x6808])),
+        ("ldr imm x3000", rep(3000, &[0x6848])),
+        ("strd x1500", rep(1500, &[0xe9c2, 0x0100])),
+        ("push pop r0-r7 x1500", rep(1500, &[0xb4ff, 0xbcff])),
+        ("push pop r0 x1500", rep(1500, &[0xb401, 0xbc01])),
+        ("adds.w x1500", rep(1500, &[0xeb10, 0x0001])),
+        ("add.w lsl x1500", rep(1500, &[0xeb00, 0x1041])),
+        ("ands lsr x3000", rep(3000, &[0x4008, 0x0840])),
+        ("cmp reg x3000", rep(3000, &[0x4288])),
+        ("vldr vstr x1500", rep(1500, &[0xed91, 0x0a01, 0xed81, 0x0a02])),
+        ("vmla x1500", rep(1500, &[0xee00, 0x0a81])),
+        ("smlal x1500", rep(1500, &[0xfbc2, 0x0103])),
+        ("uadd8 x1500", rep(1500, &[0xfa81, 0xf042])),
+        ("it eq add x1500", rep(1500, &[0xbf08, 0x1840])),
+        ("it gt ldr x1500", rep(1500, &[0xbfc8, 0x6808])),
+        (
+            "itttt hi x700",
+            rep(700, &[0xbf81, 0x1840, 0x6008, 0x6808, 0x4288]),
+        ),
+        (
+            "ite le strd x700",
+            rep(700, &[0xbfd4, 0xe9c2, 0x0100, 0xe9c2, 0x0102]),
+        ),
+    ] {
+        check(name, Case::new(&code, &r1_data));
+    }
+    // Every LDM/STM list size, with and without writeback, up and down
+    // (r1 is the base; the 32-bit forms need two registers or more).
+    for n in 1..=12u16 {
+        let list = (0..13u16)
+            .filter(|&r| r != 1)
+            .take(n as usize)
+            .fold(0, |l, r| l | 1 << r);
+        if n <= 8 {
+            let lo = (1u16 << n) - 1;
+            check(
+                &format!("push pop {n} regs"),
+                Case::new(&rep(1000, &[0xb400 | lo, 0xbc00 | lo]), &r1_data),
+            );
+        }
+        if n < 2 {
+            continue;
+        }
+        for (name, code) in [
+            ("ldm stm", rep(600, &[0xe881, list, 0xe891, list])),
+            ("ldmdb stmdb", rep(600, &[0xe901, list, 0xe911, list])),
+            ("stm! ldmdb!", rep(600, &[0xe8a1, list, 0xe931, list])),
+            ("stmdb! ldm!", rep(600, &[0xe921, list, 0xe8b1, list])),
+            ("push.w pop.w", rep(600, &[0xe92d, list, 0xe8bd, list])),
+            ("it ne ldm", rep(600, &[0xbf18, 0xe891, list])),
+        ] {
+            check(&format!("{name} {n} regs"), Case::new(&code, &r1_data));
+        }
+    }
+    // The first FP instruction of a block costs more until FPCA is set.
+    check(
+        "lazy fp x1500",
+        Case::new(&rep(1500, &[0x1840, 0xee30, 0x0a01]), &r1_data),
+    );
+
     // Instructions that end blocks or stop the run.
     for (name, insn) in [
         ("udf", &[0xde00u16][..]),
@@ -395,6 +465,15 @@ fn targeted_scenarios_match_unicorn() {
     check(
         "vmov first",
         Case::new(&[0xee10, 0x0a10, nop], &|c| c.reg_write(Reg::Fpscr, 0x0300_0000)),
+    );
+    // A skipped first FP instruction (movs clears Z; it eq) still marks
+    // the FP context as created for the rest of the block: the vmrs reads
+    // the FPSCR that was set before the run.
+    check(
+        "fpscr lazy skipped in it",
+        Case::new(&[0x2101, 0xbf08, 0xee30, 0x0a81, 0xeef1, 0x0a10, nop], &|c| {
+            c.reg_write(Reg::Fpscr, 0x0300_0000)
+        }),
     );
     check(
         "vmsr",
@@ -1062,6 +1141,73 @@ fn random_programs_match_unicorn() {
             if bad.len() >= 10 {
                 break;
             }
+        }
+    }
+    assert!(bad.is_empty(), "{} mismatches:\n{}", bad.len(), bad.join("\n"));
+}
+
+/// Long straight-line programs (with IT blocks), long enough that QEMU's
+/// TCG op budget, not the page end, decides where blocks end. Runs start
+/// at several points, as random registers make most runs fault early and
+/// the first block is translated whole either way.
+#[test]
+fn long_straight_programs_match_unicorn() {
+    use pdsim_thumb::decode::{decode, is32};
+    let runs = std::env::var("PDSIM_FUZZ_RUNS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .map_or(60, |n| n / 50);
+    // An instruction that doesn't end a block, from `gen_plain`.
+    let plain = |g: &mut Rng, in_it: bool| loop {
+        let v = gen_plain(g, in_it);
+        let k = decode(0, v[0], v.get(1).copied().unwrap_or(0)).k;
+        if !k.ends_block() && v.len() == if is32(v[0]) { 2 } else { 1 } {
+            break v;
+        }
+    };
+    let mut bad = Vec::new();
+    for seed in 1..=runs {
+        let mut g = Rng(seed.wrapping_mul(0xd1b5_4a32_d192_ed03) | 1);
+        let mut code = Vec::new();
+        // Starts outside IT blocks.
+        let mut starts = Vec::new();
+        let len = 2000 + g.n(1000);
+        for _ in 0..len {
+            starts.push(code.len());
+            if g.n(10) == 0 {
+                let cond = g.n(14) as u16;
+                let mask = 1 + g.n(15) as u16;
+                code.push(0xbf00 | cond << 4 | mask);
+                for _ in 0..4 - mask.trailing_zeros() {
+                    code.extend(plain(&mut g, true));
+                }
+            } else {
+                code.extend(plain(&mut g, false));
+            }
+        }
+        let state = g.next();
+        // Odd seeds start with FPCA clear, so the first FP instruction pays
+        // for a new FP context mid-block; even ones run a VMSR first.
+        let vmsr = C + 0xf000;
+        code.resize(0x7800, 0xbf00);
+        code.extend([0xeee1, 12 << 12 | 0xa10]);
+        let setup = move |c: &mut dyn Cpu<St>| {
+            random_state(&mut Rng(state | 1), c);
+            if seed % 2 == 0 {
+                c.emu_start(vmsr | 1, vmsr + 4, &mut St::default(), &H).unwrap();
+            }
+        };
+        for k in 0..8 {
+            let at = starts[k * starts.len() / 8];
+            let mut case = Case::new(&code, &setup);
+            case.begin = (C + 2 * at as u32) | 1;
+            case.until = vmsr;
+            if let Some(d) = case.compare() {
+                bad.push(format!("seed {seed} start {at}: {}", &d[..d.len().min(600)]));
+            }
+        }
+        if bad.len() >= 10 {
+            break;
         }
     }
     assert!(bad.is_empty(), "{} mismatches:\n{}", bad.len(), bad.join("\n"));

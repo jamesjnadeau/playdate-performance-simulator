@@ -670,12 +670,6 @@ impl ThumbCpu {
 
     /// Runs a floating-point instruction (after its IT check).
     pub(crate) fn exec_vfp(&mut self, op: &Op) -> Result<(), Exit> {
-        // QEMU's lazy FP state: the first FP instruction creates a new FP
-        // context with FPSCR from FPDSCR (zero).
-        if !self.fpca {
-            self.fpca = true;
-            self.fpscr = 0;
-        }
         let mut fp = Fp::new(self.fpscr);
         let s = self.s;
         match op.k {
@@ -846,5 +840,28 @@ impl ThumbCpu {
         }
         self.fpscr |= fp.flags;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FZ: u32 = 1 << 24;
+
+    /// FZ flushes a tiny result to a zero of the same sign and raises UFC
+    /// (not IXC), as QEMU's `float32_mul` does with `flush_to_zero`.
+    #[test]
+    fn fz_flushes_a_tiny_product_to_signed_zero() {
+        // 2^-126 * 0.5 = 2^-127, below the smallest normal.
+        for (x, zero) in [(0x0080_0000, 0), (0x8080_0000, 0x8000_0000)] {
+            let mut fp = Fp::new(FZ);
+            assert_eq!(fp.mul(x, 0x3f00_0000), zero, "{x:#x}");
+            assert_eq!(fp.flags, UFC, "{x:#x}");
+        }
+        // Without FZ the result is the denormal 2^-127.
+        let mut fp = Fp::new(0);
+        assert_eq!(fp.mul(0x0080_0000, 0x3f00_0000), 0x0040_0000);
+        assert_eq!(fp.flags & UFC, 0);
     }
 }

@@ -237,6 +237,10 @@ impl ThumbCpu {
         let it = self.it;
         let in_it = it & 0xf != 0;
         self.in_it = in_it;
+        // QEMU creates a new FP context (FPSCR from FPDSCR, which is zero)
+        // in the first floating-point instruction translated with FPCA
+        // clear, behind that instruction's IT condition.
+        let new_fp_ctxt = crate::tcg::is_fp(&op.k) && !std::mem::replace(&mut self.tb_fpca, true);
         if in_it {
             self.it = if it & 7 == 0 {
                 0
@@ -733,7 +737,13 @@ impl ThumbCpu {
                     self.faultmask = disable;
                 }
             }
-            _ => self.exec_vfp(op)?,
+            _ => {
+                if new_fp_ctxt {
+                    self.fpca = true;
+                    self.fpscr = 0;
+                }
+                self.exec_vfp(op)?
+            }
         }
         self.r[15] = npc;
         Ok(())
