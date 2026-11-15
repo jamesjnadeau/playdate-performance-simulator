@@ -8,13 +8,12 @@
 //! **turbo** mode it runs as fast as the host allows and still reports
 //! device timings.
 
-use base64::Engine;
-use pdsim_core::{trace, Calibration, Category, FrameStats, HotspotTable};
-use pdsim_device::{buttons, Game};
+mod core;
+pub use core::{SessionCore, Tick};
+
+use pdsim_core::HotspotTable;
 use serde::Deserialize;
-use serde_json::{json, Value};
-use std::collections::VecDeque;
-use std::path::PathBuf;
+use serde_json::Value;
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -74,11 +73,6 @@ pub enum Command {
     Quit,
 }
 
-/// How many frames of history to keep (for traces and the flame view).
-const HISTORY: usize = 3000;
-/// Stats are sent at most this often.
-const STATS_INTERVAL: Duration = Duration::from_millis(100);
-
 /// Handle to a running session thread.
 pub struct Session {
     tx: Sender<Command>,
@@ -94,7 +88,7 @@ impl Session {
         let (tx, rx) = channel();
         let thread = std::thread::Builder::new()
             .name("pdsim-session".into())
-            .spawn(move || Runner::new(Box::new(emit)).run(rx))
+            .spawn(move || run_thread(Box::new(emit), rx))
             .expect("spawn session thread");
         Session {
             tx,
@@ -115,6 +109,31 @@ impl Session {
     }
 }
 
+/// The session thread: drives a [`SessionCore`] from a command queue.
+fn run_thread(emit: Box<dyn Fn(Value)>, rx: Receiver<Command>) {
+    let start = Instant::now();
+    let now_ms = || start.elapsed().as_secs_f64() * 1000.0;
+    let mut core = SessionCore::new(emit);
+    loop {
+        let now = now_ms();
+        let timeout = match core.tick(now).next_wake_ms {
+            Some(w) => Duration::from_secs_f64((w - now).max(0.0) / 1000.0),
+            None => Duration::from_millis(200),
+        };
+        match rx.recv_timeout(timeout) {
+            Ok(c) => {
+                let quit = c == Command::Quit;
+                core.handle(c, now_ms());
+                if quit {
+                    return;
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => return,
+        }
+    }
+}
+
 impl Drop for Session {
     fn drop(&mut self) {
         let _ = self.tx.send(Command::Quit);
@@ -124,396 +143,13 @@ impl Drop for Session {
     }
 }
 
-struct Runner {
-    emit: Box<dyn Fn(Value) + Send>,
-    game: Option<Box<dyn Game>>,
-    running: bool,
-    turbo: bool,
-    speed: f64,
-    break_on_over: bool,
-    history: VecDeque<FrameStats>,
-    pending: Vec<Value>,
-    last_stats: Instant,
-    // Pacing anchor: device ms at `anchor_wall`.
-    anchor_wall: Instant,
-    anchor_device_ms: f64,
-    log_sent: usize,
-    path: Option<String>,
-    calibration: Calibration,
-    loaded_event: Option<Value>,
-}
-
-fn b64(bytes: &[u8]) -> String {
-    base64::engine::general_purpose::STANDARD.encode(bytes)
-}
-
-impl Runner {
-    fn new(emit: Box<dyn Fn(Value) + Send>) -> Runner {
-        Runner {
-            emit,
-            game: None,
-            running: false,
-            turbo: false,
-            speed: 1.0,
-            break_on_over: false,
-            history: VecDeque::new(),
-            pending: vec![],
-            last_stats: Instant::now(),
-            anchor_wall: Instant::now(),
-            anchor_device_ms: 0.0,
-            log_sent: 0,
-            path: None,
-            calibration: Calibration::default_estimates(),
-            loaded_event: None,
-        }
-    }
-
-    fn run(mut self, rx: Receiver<Command>) {
-        loop {
-            // Wait for a command when idle; otherwise just drain the queue.
-            let cmd = if self.running && self.game.is_some() {
-                match rx.try_recv() {
-                    Ok(c) => Some(c),
-                    Err(std::sync::mpsc::TryRecvError::Empty) => None,
-                    Err(_) => return,
-                }
-            } else {
-                match rx.recv_timeout(Duration::from_millis(200)) {
-                    Ok(c) => Some(c),
-                    Err(RecvTimeoutError::Timeout) => None,
-                    Err(_) => return,
-                }
-            };
-            if let Some(c) = cmd {
-                if c == Command::Quit {
-                    return;
-                }
-                self.handle(c);
-                continue;
-            }
-            if self.running && self.game.is_some() {
-                self.frame();
-                self.pace(&rx);
-            }
-        }
-    }
-
-    fn state(&self) {
-        (self.emit)(json!({
-            "type": "state",
-            "running": self.running,
-            "mode": if self.turbo { "turbo" } else { "device" },
-            "speed": self.speed,
-            "breakOnOverBudget": self.break_on_over,
-            "loaded": self.game.is_some(),
-        }));
-    }
-
-    fn reanchor(&mut self) {
-        self.anchor_wall = Instant::now();
-        self.anchor_device_ms = self
-            .game
-            .as_ref()
-            .map_or(0.0, |g| g.device().borrow().scheduler.now_ms());
-    }
-
-    fn handle(&mut self, c: Command) {
-        match c {
-            Command::Load { path, calibration } => self.load(path, calibration),
-            Command::Play => {
-                self.running = true;
-                self.reanchor();
-                self.state();
-            }
-            Command::Pause => {
-                self.running = false;
-                self.flush_stats();
-                self.state();
-            }
-            Command::Step => {
-                self.running = false;
-                if self.game.is_some() {
-                    self.frame();
-                    self.flush_stats();
-                    self.send_flame(None);
-                }
-                self.state();
-            }
-            Command::SetMode { mode } => {
-                self.turbo = mode == "turbo";
-                self.reanchor();
-                self.state();
-            }
-            Command::SetSpeed { speed } => {
-                self.speed = speed.clamp(0.05, 20.0);
-                self.reanchor();
-                self.state();
-            }
-            Command::BreakOnOverBudget { on } => {
-                self.break_on_over = on;
-                self.state();
-            }
-            Command::Button { name, down } => {
-                if let (Some(g), Some(b)) = (&self.game, buttons::from_name(&name)) {
-                    let mut d = g.device().borrow_mut();
-                    if down {
-                        d.input.press(b)
-                    } else {
-                        d.input.release(b)
-                    }
-                }
-            }
-            Command::Crank { delta } => {
-                if let Some(g) = &self.game {
-                    g.device().borrow_mut().input.crank_by(delta);
-                }
-            }
-            Command::CrankTo { angle } => {
-                if let Some(g) = &self.game {
-                    g.device().borrow_mut().input.crank_to(angle);
-                }
-            }
-            Command::Dock { docked } => {
-                if let Some(g) = &self.game {
-                    g.device().borrow_mut().input.set_docked(docked);
-                }
-            }
-            Command::Accel { x, y, z } => {
-                if let Some(g) = &self.game {
-                    g.device().borrow_mut().input.set_accel(x, y, z);
-                }
-            }
-            Command::ExportTrace { path } => self.export_trace(path),
-            Command::Flame { index } => self.send_flame(index),
-            Command::Hello => {
-                if let Some(l) = &self.loaded_event {
-                    (self.emit)(l.clone());
-                }
-                self.state();
-            }
-            Command::Quit => {}
-        }
-    }
-
-    fn load(&mut self, path: String, calibration: Option<String>) {
-        self.game = None;
-        self.history.clear();
-        self.pending.clear();
-        self.log_sent = 0;
-        let cal = match calibration.filter(|s| !s.is_empty()) {
-            Some(p) => match Calibration::load(&p) {
-                Ok(c) => c,
-                Err(e) => return self.error(format!("calibration {p}: {e}")),
-            },
-            None => Calibration::default_estimates(),
-        };
-        let cfg = pdsim_runner::RunConfig {
-            calibration: cal.clone(),
-            ..Default::default()
-        };
-        match pdsim_runner::load(std::path::Path::new(&path), &cfg) {
-            Ok(g) => {
-                let ev = json!({
-                    "type": "loaded",
-                    "path": path,
-                    "description": g.describe(),
-                    "calibration": cal.name,
-                    "estimated": cal.estimated,
-                    "cpuHz": cal.cpu_hz,
-                    "ramBytes": cal.ram_bytes,
-                    "categories": Category::ALL.iter().map(|c| c.name()).collect::<Vec<_>>(),
-                });
-                (self.emit)(ev.clone());
-                self.loaded_event = Some(ev);
-                self.game = Some(g);
-                self.path = Some(path);
-                self.calibration = cal;
-                self.running = true;
-                self.reanchor();
-                self.send_log();
-            }
-            Err(e) => self.error(e.0),
-        }
-        self.state();
-    }
-
-    fn error(&mut self, msg: String) {
-        (self.emit)(json!({"type": "error", "message": msg}));
-    }
-
-    fn frame(&mut self) {
-        let Some(g) = self.game.as_mut() else { return };
-        match g.frame(None) {
-            Ok(f) => {
-                let (fb, rows, inverted) = {
-                    let d = g.device().borrow();
-                    let mut rows = [0u8; 30];
-                    for (i, r) in d.last_rows.iter().enumerate() {
-                        if *r {
-                            rows[i / 8] |= 1 << (i % 8);
-                        }
-                    }
-                    (b64(&d.gfx.display().data), b64(&rows), d.gfx.inverted)
-                };
-                (self.emit)(json!({
-                    "type": "frame",
-                    "index": f.index,
-                    "fb": fb,
-                    "rows": rows,
-                    "inverted": inverted,
-                    "overBudget": f.over_budget,
-                }));
-                self.pending.push(frame_lite(&f));
-                let over = f.over_budget;
-                self.history.push_back(f);
-                while self.history.len() > HISTORY {
-                    self.history.pop_front();
-                }
-                if self.last_stats.elapsed() >= STATS_INTERVAL {
-                    self.flush_stats();
-                }
-                if over && self.break_on_over {
-                    self.running = false;
-                    self.flush_stats();
-                    self.send_flame(None);
-                    (self.emit)(json!({"type": "break", "reason": "over budget"}));
-                    self.state();
-                }
-            }
-            Err(e) => {
-                self.running = false;
-                self.send_log();
-                self.error(e.0);
-                self.state();
-            }
-        }
-    }
-
-    fn pace(&mut self, rx: &Receiver<Command>) {
-        if self.turbo {
-            return;
-        }
-        let Some(g) = &self.game else { return };
-        let device_ms = g.device().borrow().scheduler.now_ms();
-        let target = self.anchor_wall
-            + Duration::from_secs_f64(((device_ms - self.anchor_device_ms) / self.speed / 1000.0).max(0.0));
-        let now = Instant::now();
-        if target > now {
-            // Sleep, but wake for commands (input should not wait a frame).
-            if let Ok(c) = rx.recv_timeout(target - now) {
-                if c == Command::Quit {
-                    self.game = None;
-                    self.running = false;
-                    return;
-                }
-                self.handle(c);
-                // Keep the remaining wait.
-                let now = Instant::now();
-                if target > now && self.running && !self.turbo {
-                    std::thread::sleep(target - now);
-                }
-            }
-        } else if now - target > Duration::from_millis(250) {
-            // The host fell behind; don't try to catch up in a burst.
-            self.reanchor();
-        }
-    }
-
-    fn send_log(&mut self) {
-        let Some(g) = &self.game else { return };
-        let d = g.device().borrow();
-        if self.log_sent > d.log.len() {
-            self.log_sent = 0;
-        }
-        if d.log.len() > self.log_sent {
-            let lines: Vec<&String> = d.log[self.log_sent..].iter().collect();
-            (self.emit)(json!({"type": "log", "lines": lines}));
-            self.log_sent = d.log.len();
-        }
-    }
-
-    fn flush_stats(&mut self) {
-        self.last_stats = Instant::now();
-        self.send_log();
-        let Some(g) = &self.game else { return };
-        let frames = std::mem::take(&mut self.pending);
-        let d = g.device().borrow();
-        let hot = d.hotspots.top(40);
-        let last = self.history.back();
-        (self.emit)(json!({
-            "type": "stats",
-            "frames": frames,
-            "hotspots": hot,
-            "droppedTotal": d.scheduler.dropped_total(),
-            "overBudgetTotal": d.scheduler.over_budget_total(),
-            "frameIndex": d.scheduler.frame_index(),
-            "deviceMs": d.scheduler.now_ms(),
-            "refreshRate": d.scheduler.refresh_rate(),
-            "memory": last.map(|f| f.memory),
-        }));
-    }
-
-    fn send_flame(&mut self, index: Option<u64>) {
-        let f = match index {
-            Some(i) => self.history.iter().find(|f| f.index == i),
-            None => self.history.back(),
-        };
-        let Some(f) = f else { return };
-        (self.emit)(json!({
-            "type": "flame",
-            "index": f.index,
-            "workCycles": f.cycles.total(),
-            "folded": f.profile.folded,
-        }));
-    }
-
-    fn export_trace(&mut self, path: Option<String>) {
-        let frames: Vec<FrameStats> = self.history.iter().cloned().collect();
-        let t = trace::chrome_trace(&frames);
-        let path = path
-            .filter(|p| !p.is_empty())
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                let base = std::env::var_os("HOME")
-                    .map(PathBuf::from)
-                    .unwrap_or_else(std::env::temp_dir);
-                let n = self
-                    .game
-                    .as_ref()
-                    .map_or(0, |g| g.device().borrow().scheduler.frame_index());
-                base.join(format!("pdsim-trace-{n}.json"))
-            });
-        match std::fs::write(&path, t.to_string()) {
-            Ok(()) => (self.emit)(
-                json!({"type": "traceExported", "path": path.display().to_string(), "frames": frames.len()}),
-            ),
-            Err(e) => self.error(format!("writing {}: {e}", path.display())),
-        }
-    }
-}
-
-/// The per-frame data the perf panel needs (no profile).
-fn frame_lite(f: &FrameStats) -> Value {
-    json!({
-        "index": f.index,
-        "workMs": f.work_ms,
-        "frameMs": f.frame_ms,
-        "budgetMs": f.budget_ms,
-        "cpu": f.cpu_percent,
-        "categories": f.categories,
-        "overBudget": f.over_budget,
-        "dropped": f.dropped,
-        "rows": f.rows_updated,
-        "memory": f.memory,
-    })
-}
-
 /// Keeps the hotspot type reachable for users of this crate.
 pub type Hotspots = HotspotTable;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
     use std::sync::{Arc, Mutex};
 
     fn example() -> String {
