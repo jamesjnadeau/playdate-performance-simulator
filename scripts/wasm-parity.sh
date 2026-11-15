@@ -4,14 +4,19 @@
 # for the C projects: the WASM build runs them on pdsim-thumb, the native one on Unicorn. Exit 0 only if all match.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# A skip must be visible in CI logs, not silent.
+skipped() {
+  echo "SKIPPED (no SDK): $1"
+  [ -z "${GITHUB_ACTIONS:-}" ] || echo "::warning::wasm parity SKIPPED (no SDK): $1"
+}
 projects=(examples/lua-stress calibration/bench-lua)
 # C games need the SDK's C_API headers and a built Source/pdex.elf.
 if [ -n "${PLAYDATE_SDK_PATH:-}" ] && [ -d "$PLAYDATE_SDK_PATH/C_API" ]; then
   for p in examples/c-stress calibration/bench-c; do
-    if [ -f "$p/Source/pdex.elf" ]; then projects+=("$p"); else echo "skipping $p (no Source/pdex.elf)"; fi
+    if [ -f "$p/Source/pdex.elf" ]; then projects+=("$p"); else skipped "$p has no Source/pdex.elf"; fi
   done
 else
-  echo "skipping C projects (PLAYDATE_SDK_PATH not set)"
+  skipped "C projects (PLAYDATE_SDK_PATH not set)"
 fi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT

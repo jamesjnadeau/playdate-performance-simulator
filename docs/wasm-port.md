@@ -222,6 +222,13 @@ block JIT through `WebAssembly.Module`, though that is out of scope here).
 4. **Done when** `examples/c-stress` plays in the browser and matches the
    native report.
 
+Caveat: pdsim-thumb's op costs and block splitting mimic QEMU TCG as built
+for x86-64, which is what "Thumb == Unicorn" rests on. Upgrading Unicorn/QEMU
+or running natively on an aarch64 host can break that equality. Run
+`scripts/thumb-parity.sh` and the lockstep tests (`cargo test -p pdsim-arm
+--features unicorn,thumb --test lockstep --test thumb_vs_unicorn`) after such
+a change.
+
 ## Phase 6: polish
 - Persist the last game and SDK in IndexedDB, so a reload goes straight back
   in.

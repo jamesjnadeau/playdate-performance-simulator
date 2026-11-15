@@ -38,7 +38,8 @@ jobs:
       - name: GPL-free (thumb-only) build
         run: |
           cargo build -p pdsim-cli --no-default-features --features thumb
-          if cargo tree -p pdsim-cli --no-default-features --features thumb | grep -i unicorn; then
+          tree=$(cargo tree -p pdsim-cli --no-default-features --features thumb)
+          if grep -i unicorn <<<"$tree"; then
             echo "thumb-only build pulls in Unicorn" >&2
             exit 1
           fi

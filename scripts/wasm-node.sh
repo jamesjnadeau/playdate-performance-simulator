@@ -6,4 +6,4 @@ if ! command -v emcc >/dev/null 2>&1; then
   # shellcheck disable=SC1091
   source "${EMSDK:-$HOME/emsdk}/emsdk_env.sh" >/dev/null
 fi
-EMCC_CFLAGS="-sNODERAWFS=1" exec cargo "$@" --target wasm32-unknown-emscripten
+EMCC_CFLAGS="-sNODERAWFS=1" exec cargo "$1" --target wasm32-unknown-emscripten "${@:2}"

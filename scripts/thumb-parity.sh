@@ -13,7 +13,8 @@ for p in "${projects[@]}"; do
 done
 [ -n "${PLAYDATE_SDK_PATH:-}" ] || missing=1
 if [ "$missing" = 1 ]; then
-  echo "thumb parity skipped: no ELFs (set PLAYDATE_SDK_PATH and build them)"
+  echo "SKIPPED (no SDK): thumb parity needs the ELFs (set PLAYDATE_SDK_PATH and build them)"
+  [ -z "${GITHUB_ACTIONS:-}" ] || echo "::warning::thumb parity SKIPPED (no SDK or ELFs)"
   [ "${PDSIM_REQUIRE_ELFS:-}" = 1 ] && exit 1
   exit 0
 fi
