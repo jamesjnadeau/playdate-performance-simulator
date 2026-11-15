@@ -27,8 +27,11 @@ pub struct Ctx {
     cfunc_names: HashMap<usize, String>,
     /// Per counter slot, once seen: its feature name (`lua.cfunc.math.sin`)
     /// and extra cost, or `None` for C functions without either.
-    cfunc_slots: RefCell<Vec<Option<Option<(String, f64)>>>>,
+    cfunc_slots: RefCell<Vec<CfuncSlot>>,
 }
+
+/// A seen counter slot's feature name and extra cost, if it has them.
+type CfuncSlot = Option<Option<(String, f64)>>;
 
 pub type CtxRef = Rc<Ctx>;
 
@@ -101,8 +104,7 @@ impl Ctx {
         let delta = now.since(&self.last.borrow());
         *self.last.borrow_mut() = now;
         let cfuncs = self.cfunc_calls(&delta);
-        let vm = self.costs.vm_cycles(&delta)
-            + cfuncs.iter().map(|(_, n, k)| n * k).sum::<f64>();
+        let vm = self.costs.vm_cycles(&delta) + cfuncs.iter().map(|(_, n, k)| n * k).sum::<f64>();
         let gc = self.costs.gc_cycles(&delta);
         {
             let mut d = self.dev();

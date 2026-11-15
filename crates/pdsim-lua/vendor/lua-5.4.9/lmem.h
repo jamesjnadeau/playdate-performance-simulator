@@ -47,47 +47,65 @@
 
 
 /*
+** pdsim: each size is passed twice, real and device (32-bit Playdate);
+** see 'PDSIM_DSIZE' in lstate.h. Macros taking a type 't' or a pointer
+** 'b' compute the device size themselves; their users must include
+** lstate.h.
+*/
+
+/*
 ** Arrays of chars do not need any test
 */
 #define luaM_reallocvchar(L,b,on,n)  \
-  cast_charp(luaM_saferealloc_(L, (b), (on)*sizeof(char), (n)*sizeof(char)))
+  cast_charp(luaM_saferealloc_(L, (b), (on)*sizeof(char), (n)*sizeof(char), \
+                               (on)*sizeof(char), (n)*sizeof(char)))
 
-#define luaM_freemem(L, b, s)	luaM_free_(L, (b), (s))
-#define luaM_free(L, b)		luaM_free_(L, (b), sizeof(*(b)))
-#define luaM_freearray(L, b, n)   luaM_free_(L, (b), (n)*sizeof(*(b)))
+#define luaM_freemem(L, b, s, ds)	luaM_free_(L, (b), (s), (ds))
+#define luaM_free(L, b)		luaM_free_(L, (b), sizeof(*(b)), pdsim_dsizeof(b))
+#define luaM_freearray(L, b, n)   luaM_free_(L, (b), (n)*sizeof(*(b)), \
+                                             (n)*pdsim_dsizeof(b))
 
-#define luaM_new(L,t)		cast(t*, luaM_malloc_(L, sizeof(t), 0))
-#define luaM_newvector(L,n,t)	cast(t*, luaM_malloc_(L, (n)*sizeof(t), 0))
+#define luaM_new(L,t)		cast(t*, luaM_malloc_(L, sizeof(t), PDSIM_DSIZE(t), 0))
+#define luaM_newvector(L,n,t)	cast(t*, luaM_malloc_(L, (n)*sizeof(t), \
+                                                  (n)*PDSIM_DSIZE(t), 0))
 #define luaM_newvectorchecked(L,n,t) \
   (luaM_checksize(L,n,sizeof(t)), luaM_newvector(L,n,t))
 
-#define luaM_newobject(L,tag,s)	luaM_malloc_(L, (s), tag)
+#define luaM_newobject(L,tag,s,ds)	luaM_malloc_(L, (s), (ds), tag)
 
 #define luaM_growvector(L,v,nelems,size,t,limit,e) \
 	((v)=cast(t *, luaM_growaux_(L,v,nelems,&(size),sizeof(t), \
-                         luaM_limitN(limit,t),e)))
+                         PDSIM_DSIZE(t),luaM_limitN(limit,t),e)))
 
 #define luaM_reallocvector(L, v,oldn,n,t) \
    (cast(t *, luaM_realloc_(L, v, cast_sizet(oldn) * sizeof(t), \
-                                  cast_sizet(n) * sizeof(t))))
+                                  cast_sizet(n) * sizeof(t), \
+                                  cast_sizet(oldn) * PDSIM_DSIZE(t), \
+                                  cast_sizet(n) * PDSIM_DSIZE(t))))
 
 #define luaM_shrinkvector(L,v,size,fs,t) \
-   ((v)=cast(t *, luaM_shrinkvector_(L, v, &(size), fs, sizeof(t))))
+   ((v)=cast(t *, luaM_shrinkvector_(L, v, &(size), fs, sizeof(t), \
+                                     PDSIM_DSIZE(t))))
 
 LUAI_FUNC l_noret luaM_toobig (lua_State *L);
 
 /* not to be called directly */
 LUAI_FUNC void *luaM_realloc_ (lua_State *L, void *block, size_t oldsize,
-                                                          size_t size);
+                                                          size_t size,
+                               size_t doldsize, size_t dsize);
 LUAI_FUNC void *luaM_saferealloc_ (lua_State *L, void *block, size_t oldsize,
-                                                              size_t size);
-LUAI_FUNC void luaM_free_ (lua_State *L, void *block, size_t osize);
+                                                              size_t size,
+                                   size_t doldsize, size_t dsize);
+LUAI_FUNC void luaM_free_ (lua_State *L, void *block, size_t osize,
+                                                      size_t dosize);
 LUAI_FUNC void *luaM_growaux_ (lua_State *L, void *block, int nelems,
-                               int *size, int size_elem, int limit,
-                               const char *what);
+                               int *size, int size_elem, int dsize_elem,
+                               int limit, const char *what);
 LUAI_FUNC void *luaM_shrinkvector_ (lua_State *L, void *block, int *nelem,
-                                    int final_n, int size_elem);
-LUAI_FUNC void *luaM_malloc_ (lua_State *L, size_t size, int tag);
+                                    int final_n, int size_elem,
+                                    int dsize_elem);
+LUAI_FUNC void *luaM_malloc_ (lua_State *L, size_t size, size_t dsize,
+                                                         int tag);
 
 #endif
 

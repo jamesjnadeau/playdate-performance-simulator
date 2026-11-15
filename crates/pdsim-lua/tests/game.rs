@@ -421,3 +421,49 @@ fn runs_are_deterministic() {
         assert_eq!(ga.frame(None).unwrap().cycles, gb.frame(None).unwrap().cycles);
     }
 }
+
+#[test]
+fn lua_errors_cross_rust_frames() {
+    let g = TempGame::new(
+        "errors",
+        r#"
+        local n = 0
+        function playdate.update()
+            n += 1
+            local ok = pcall(playdate.graphics.setPattern, "bogus")
+            assert(not ok, "bad argument should raise")
+            if n == 3 then error("boom") end
+        end
+    "#,
+    );
+    let mut game = g.load();
+    assert!(game.frame(None).is_ok());
+    assert!(game.frame(None).is_ok());
+    let err = game.frame(None).unwrap_err();
+    assert!(err.0.contains("boom"), "{}", err.0);
+}
+
+#[test]
+fn lua_heap_is_luas_own_count() {
+    // The heap reading is Lua's own (device-size) count, not the bytes the
+    // host allocator handed out.
+    let t = TempGame::new(
+        "heap",
+        r#"
+        keep = {}
+        function playdate.update()
+            for i = 1, 100 do keep[#keep + 1] = {i} end
+        end
+        "#,
+    );
+    let mut g = t.load();
+    let count: mlua::Function = g
+        .lua()
+        .load("return collectgarbage('count') * 1024")
+        .into_function()
+        .unwrap();
+    for _ in 0..3 {
+        let f = g.frame(None).unwrap();
+        assert_eq!(f.memory.lua_heap, count.call::<u64>(()).unwrap());
+    }
+}

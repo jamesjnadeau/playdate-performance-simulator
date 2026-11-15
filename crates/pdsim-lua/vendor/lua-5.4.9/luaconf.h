@@ -771,8 +771,11 @@
 /*
 @@ LUAL_BUFFERSIZE is the initial buffer size used by the lauxlib
 ** buffer system.
+** pdsim: fixed at the device (ARM32) value, 16 * sizeof(void*) *
+** sizeof(lua_Number) = 16 * 4 * 8, so buffers move to a heap box at the
+** same lengths on every target.
 */
-#define LUAL_BUFFERSIZE   ((int)(16 * sizeof(void*) * sizeof(lua_Number)))
+#define LUAL_BUFFERSIZE   512
 
 
 /*

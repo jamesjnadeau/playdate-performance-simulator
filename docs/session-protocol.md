@@ -4,14 +4,17 @@
 commands and receives events, both JSON objects with a `type` field. The
 Tauri app carries them over IPC (`invoke("send", {cmd})` and the `pdsim`
 event); `pdsim serve` carries them over a WebSocket, one text message per
-command or event. The same frontend (`app/src`) works with either; in a
-browser it connects to `ws://<host>:8765`, or to the URL in `?ws=`.
+command or event. The browser build (`pdsim-wasm`) runs the session in a Web
+Worker and exchanges the same JSON through a C ABI. The same frontend
+(`app/src`) works with all three; in a plain browser it runs the worker by
+default, or connects to `ws://<host>:8765` (or the URL in `?ws=`) when opened
+with `?backend=ws`.
 
 ## Commands
 
 | `type` | Fields | Effect |
 |---|---|---|
-| `load` | `path`, `calibration?` | Load or reload a game (any path `pdsim run` accepts) with an optional profile path, and start running. |
+| `load` | `path`, `calibration?`, `dataDir?`, `sdk?` | Load or reload a game (any path `pdsim run` accepts) with an optional profile path, and start running. `dataDir` is where the game keeps its save data (default: next to the game); `sdk` is the Playdate SDK path (default: from the environment). |
 | `play` / `pause` | | Run or stop the frame loop. |
 | `step` | | Pause, then run exactly one frame and send its `flame`. |
 | `setMode` | `mode`: `"device"` or `"turbo"` | Device-speed pacing or as fast as possible. |
@@ -39,6 +42,7 @@ browser it connects to `ws://<host>:8765`, or to the URL in `?ws=`.
 | `log` | `lines` | New console output. |
 | `break` | `reason` | Paused by break-on-over-budget. |
 | `traceExported` | `path`, `frames` | `exportTrace` succeeded. |
+| `traceData` | `path`, `frame`, `frames`, `trace` | Answer to `exportTrace` from in-process hosts that have no filesystem (`trace` is the Chrome trace JSON; `path` is the requested path or null). Native hosts convert it to `traceExported`. |
 | `error` | `message` | Load failed, a game error (the session pauses), or a bad calibration path. |
 
 ## Pacing

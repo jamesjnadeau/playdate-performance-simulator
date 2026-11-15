@@ -138,16 +138,17 @@ pub fn cfunc_names(lua: &mlua::Lua) -> HashMap<usize, String> {
     unsafe {
         lua.exec_raw::<()>((), |l| {
             // Calls `add` for each C function in the table on top of the stack.
-            let scan = |l: *mut lua_State, prefix: &str, add: &mut dyn FnMut(Option<lua_CFunction>, String)| {
-                lua_pushnil(l);
-                while lua_next(l, -2) != 0 {
-                    if lua_type(l, -2) == LUA_TSTRING && lua_iscfunction(l, -1) != 0 {
-                        let k = CStr::from_ptr(lua_tostring(l, -2)).to_string_lossy();
-                        add(lua_tocfunction(l, -1), format!("{prefix}{k}"));
+            let scan =
+                |l: *mut lua_State, prefix: &str, add: &mut dyn FnMut(Option<lua_CFunction>, String)| {
+                    lua_pushnil(l);
+                    while lua_next(l, -2) != 0 {
+                        if lua_type(l, -2) == LUA_TSTRING && lua_iscfunction(l, -1) != 0 {
+                            let k = CStr::from_ptr(lua_tostring(l, -2)).to_string_lossy();
+                            add(lua_tocfunction(l, -1), format!("{prefix}{k}"));
+                        }
+                        lua_pop(l, 1);
                     }
-                    lua_pop(l, 1);
-                }
-            };
+                };
             lua_pushglobaltable(l);
             scan(l, "", &mut add);
             lua_pop(l, 1);
@@ -215,6 +216,23 @@ pub fn raw_state(lua: &mlua::Lua) -> *mut LuaState {
         lua.exec_raw::<()>((), |l| p = l).expect("exec_raw");
     }
     p
+}
+
+/// Lua's own count of its heap in bytes (what `collectgarbage("count")`
+/// reports). It counts device (32-bit) object sizes, unlike mlua's
+/// `used_memory()`, which counts the bytes the host allocator handed out.
+pub fn heap_bytes(lua: &mlua::Lua) -> u64 {
+    use mlua::ffi::{lua_gc, LUA_GCCOUNT, LUA_GCCOUNTB};
+    let mut n = 0u64;
+    unsafe {
+        lua.exec_raw::<()>((), |l| {
+            let kb = lua_gc(l, LUA_GCCOUNT) as u64;
+            let b = lua_gc(l, LUA_GCCOUNTB) as u64;
+            n = kb * 1024 + b;
+        })
+        .expect("exec_raw");
+    }
+    n
 }
 
 #[cfg(test)]
@@ -349,5 +367,115 @@ mod tests {
             .unwrap();
         let d = unsafe { Counters::read(l) }.since(&before);
         assert!(d.alloced > 1000 * 16, "alloced {}", d.alloced);
+    }
+
+    /// Bytes allocated while running `f(arg)`, after a warm-up call (so the
+    /// stack and call frames have already grown).
+    fn alloced_by(lua: &mlua::Lua, f: &mlua::Function, arg: i64) -> u64 {
+        let l = raw_state(lua);
+        f.call::<()>(arg).unwrap();
+        let before = unsafe { Counters::read(l) };
+        f.call::<()>(arg).unwrap();
+        unsafe { Counters::read(l) }.since(&before).alloced
+    }
+
+    // Memory is counted at the object sizes of the 32-bit device (see
+    // vendor/README.md), on every target.
+
+    #[test]
+    fn empty_table_counts_device_size() {
+        let lua = mlua::Lua::new();
+        let f: mlua::Function = lua
+            .load("return function(n) for i = 1, n do local t = {} end end")
+            .eval()
+            .unwrap();
+        // sizeof(Table) on ARM32/wasm32.
+        assert_eq!(alloced_by(&lua, &f, 100), 100 * 32);
+    }
+
+    #[test]
+    fn string_counts_device_size() {
+        let lua = mlua::Lua::new();
+        let f: mlua::Function = lua
+            .load("return function(n) local s = string.rep('x', n) end")
+            .eval()
+            .unwrap();
+        // A long string: the 16-byte TString header, the characters and a NUL.
+        assert_eq!(alloced_by(&lua, &f, 100), 16 + 100 + 1);
+    }
+
+    #[test]
+    fn library_userdata_counts_device_size() {
+        let lua = mlua::Lua::new();
+        let f: mlua::Function = lua
+            .load("return function(n) for i = 1, n do string.gmatch('a', 'a') end end")
+            .eval()
+            .unwrap();
+        // gmatch's state (a 292-byte GMatchState on ARM32 behind the 16-byte
+        // userdata header) and its C closure with three upvalues.
+        assert_eq!(alloced_by(&lua, &f, 10), 10 * ((16 + 292) + (16 + 3 * 16)));
+    }
+
+    #[test]
+    fn host_userdata_counts_no_payload() {
+        let lua = mlua::Lua::new();
+        let l = raw_state(&lua);
+        let before = unsafe { Counters::read(l) };
+        unsafe {
+            lua.exec_raw::<()>((), |l| {
+                mlua::ffi::lua_newuserdatauv(l, 1000, 1);
+            })
+            .unwrap();
+        }
+        // The userdata header and its one user value; the payload is host memory.
+        assert_eq!(unsafe { Counters::read(l) }.since(&before).alloced, 24 + 16);
+    }
+
+    #[test]
+    fn alloc_and_free_balance() {
+        let lua = mlua::Lua::new();
+        let l = raw_state(&lua);
+        // Compiled up front, so measuring allocates nothing.
+        let count: mlua::Function = lua
+            .load("return collectgarbage('count') * 1024")
+            .into_function()
+            .unwrap();
+        let collect: mlua::Function = lua.load("collectgarbage('collect')").into_function().unwrap();
+        // Garbage of every kind: tables (array and hash parts), short and
+        // long strings, closures and upvalues, prototypes, coroutines and
+        // C closures with userdata.
+        let garbage: mlua::Function = lua
+            .load(
+                r#"return function()
+                    for i = 1, 200 do
+                        local t = {i, i + 1, x = i, ["k" .. i] = i}
+                        local s = string.rep("y", 50 + i)
+                        local function inc() i = i + 1 return t, s end
+                        inc()
+                        local f = load("local a, b = ... return function() return a + b end")
+                        f(1, 2)()
+                        local co = coroutine.wrap(function(a) coroutine.yield(a) end)
+                        co(i)
+                        for w in string.gmatch("a b c", "%a") do end
+                    end
+                end"#,
+            )
+            .eval()
+            .unwrap();
+        let round = || -> (i64, i64) {
+            collect.call::<()>(()).unwrap();
+            let (c0, before) = (count.call::<i64>(()).unwrap(), unsafe { Counters::read(l) });
+            garbage.call::<()>(()).unwrap();
+            collect.call::<()>(()).unwrap();
+            let c1 = count.call::<i64>(()).unwrap();
+            let d = unsafe { Counters::read(l) }.since(&before);
+            (d.alloced as i64 - d.freed as i64, c1 - c0)
+        };
+        round(); // warm up (stacks, call frames and the string table grow)
+        let (net, counted) = round();
+        // The counters agree with Lua's own accounting...
+        assert_eq!(net, counted);
+        // ...and every object is freed at the size it was allocated at.
+        assert_eq!(net, 0);
     }
 }

@@ -95,7 +95,8 @@ static void *firsttry (global_State *g, void *block, size_t os, size_t ns) {
 
 
 void *luaM_growaux_ (lua_State *L, void *block, int nelems, int *psize,
-                     int size_elems, int limit, const char *what) {
+                     int size_elems, int dsize_elems, int limit,
+                     const char *what) {
   void *newblock;
   int size = *psize;
   if (nelems + 1 <= size)  /* does one extra element still fit? */
@@ -113,7 +114,9 @@ void *luaM_growaux_ (lua_State *L, void *block, int nelems, int *psize,
   lua_assert(nelems + 1 <= size && size <= limit);
   /* 'limit' ensures that multiplication will not overflow */
   newblock = luaM_saferealloc_(L, block, cast_sizet(*psize) * size_elems,
-                                         cast_sizet(size) * size_elems);
+                                         cast_sizet(size) * size_elems,
+                                         cast_sizet(*psize) * dsize_elems,
+                                         cast_sizet(size) * dsize_elems);
   *psize = size;  /* update only when everything else is OK */
   return newblock;
 }
@@ -126,12 +129,14 @@ void *luaM_growaux_ (lua_State *L, void *block, int nelems, int *psize,
 ** error.
 */
 void *luaM_shrinkvector_ (lua_State *L, void *block, int *size,
-                          int final_n, int size_elem) {
+                          int final_n, int size_elem, int dsize_elem) {
   void *newblock;
   size_t oldsize = cast_sizet((*size) * size_elem);
   size_t newsize = cast_sizet(final_n * size_elem);
   lua_assert(newsize <= oldsize);
-  newblock = luaM_saferealloc_(L, block, oldsize, newsize);
+  newblock = luaM_saferealloc_(L, block, oldsize, newsize,
+                               cast_sizet((*size) * dsize_elem),
+                               cast_sizet(final_n * dsize_elem));
   *size = final_n;
   return newblock;
 }
@@ -147,12 +152,12 @@ l_noret luaM_toobig (lua_State *L) {
 /*
 ** Free memory
 */
-void luaM_free_ (lua_State *L, void *block, size_t osize) {
+void luaM_free_ (lua_State *L, void *block, size_t osize, size_t dosize) {
   global_State *g = G(L);
   lua_assert((osize == 0) == (block == NULL));
   callfrealloc(g, block, osize, 0);
-  g->GCdebt -= osize;
-  g->pdsim_freed += osize;  /* pdsim */
+  g->GCdebt -= dosize;  /* pdsim: device size */
+  g->pdsim_freed += dosize;  /* pdsim */
 }
 
 
@@ -174,7 +179,8 @@ static void *tryagain (lua_State *L, void *block,
 /*
 ** Generic allocation routine.
 */
-void *luaM_realloc_ (lua_State *L, void *block, size_t osize, size_t nsize) {
+void *luaM_realloc_ (lua_State *L, void *block, size_t osize, size_t nsize,
+                     size_t dosize, size_t dnsize) {
   void *newblock;
   global_State *g = G(L);
   lua_assert((osize == 0) == (block == NULL));
@@ -185,23 +191,24 @@ void *luaM_realloc_ (lua_State *L, void *block, size_t osize, size_t nsize) {
       return NULL;  /* do not update 'GCdebt' */
   }
   lua_assert((nsize == 0) == (newblock == NULL));
-  g->GCdebt = (g->GCdebt + nsize) - osize;
-  if (nsize > osize) g->pdsim_alloced += nsize - osize;  /* pdsim */
-  else g->pdsim_freed += osize - nsize;
+  g->GCdebt = (g->GCdebt + dnsize) - dosize;  /* pdsim: device sizes */
+  if (dnsize > dosize) g->pdsim_alloced += dnsize - dosize;  /* pdsim */
+  else g->pdsim_freed += dosize - dnsize;
   return newblock;
 }
 
 
 void *luaM_saferealloc_ (lua_State *L, void *block, size_t osize,
-                                                    size_t nsize) {
-  void *newblock = luaM_realloc_(L, block, osize, nsize);
+                                                    size_t nsize,
+                         size_t dosize, size_t dnsize) {
+  void *newblock = luaM_realloc_(L, block, osize, nsize, dosize, dnsize);
   if (l_unlikely(newblock == NULL && nsize > 0))  /* allocation failed? */
     luaM_error(L);
   return newblock;
 }
 
 
-void *luaM_malloc_ (lua_State *L, size_t size, int tag) {
+void *luaM_malloc_ (lua_State *L, size_t size, size_t dsize, int tag) {
   if (size == 0)
     return NULL;  /* that's all */
   else {
@@ -212,8 +219,8 @@ void *luaM_malloc_ (lua_State *L, size_t size, int tag) {
       if (newblock == NULL)
         luaM_error(L);
     }
-    g->GCdebt += size;
-    g->pdsim_alloced += size;  /* pdsim */
+    g->GCdebt += dsize;  /* pdsim: device size */
+    g->pdsim_alloced += dsize;  /* pdsim */
     return newblock;
   }
 }

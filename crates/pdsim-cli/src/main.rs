@@ -65,6 +65,11 @@ struct RunArgs {
     /// Playdate SDK (defaults to $PLAYDATE_SDK_PATH).
     #[arg(long)]
     sdk: Option<PathBuf>,
+    /// CPU emulator for C games (default: unicorn if built in, else thumb).
+    /// Checked up front for every game: an emulator that is not built in is
+    /// an error (exit 2) even for Lua games.
+    #[arg(long, value_parser = ["unicorn", "thumb"])]
+    cpu: Option<String>,
     /// Skip per-function attribution (faster).
     #[arg(long)]
     no_profile: bool,
@@ -102,12 +107,21 @@ fn run(a: RunArgs) -> Result<()> {
         ),
         None => None,
     };
-    let cfg = pdsim_runner::RunConfig {
+    // `..Default` fills `cpu`, which only exists when C games are built in.
+    #[allow(clippy::needless_update)]
+    let mut cfg = pdsim_runner::RunConfig {
         calibration: calibration.clone(),
         data_dir: a.data_dir.clone(),
         sdk: a.sdk.clone().or_else(pdsim_device::Device::sdk_from_env),
         profile: !a.no_profile,
+        ..Default::default()
     };
+    if let Some(name) = &a.cpu {
+        if cfg.set_cpu(name).is_err() {
+            eprintln!("pdsim: this build has no {name} CPU (rebuild with --features {name})");
+            std::process::exit(2);
+        }
+    }
     let mut game = pdsim_runner::load(&a.game, &cfg).map_err(|e| anyhow::anyhow!(e.0))?;
     if !a.quiet {
         eprintln!("{} ({})", game.describe(), calibration.name);
@@ -202,6 +216,8 @@ fn serve(game: Option<PathBuf>, port: u16) -> Result<()> {
             session.send(pdsim_session::Command::Load {
                 path: g.display().to_string(),
                 calibration: None,
+                data_dir: None,
+                sdk: None,
             });
         }
         'conn: loop {

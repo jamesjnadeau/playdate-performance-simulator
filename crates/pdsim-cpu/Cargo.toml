@@ -1,0 +1,9 @@
+[package]
+name = "pdsim-cpu"
+description = "The CPU interface the Playdate C game emulator runs on (Unicorn or the pdsim-thumb interpreter)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]

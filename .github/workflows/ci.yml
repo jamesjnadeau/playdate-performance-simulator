@@ -6,19 +6,90 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Pinned so a new Rust release (and its new clippy lints) can't break CI
+  # on its own; bump it deliberately.
+  RUST_TOOLCHAIN: "1.99.1"
 
 jobs:
   check:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - name: fmt
         run: cargo fmt --all --check
+      - name: system libraries for the Tauri app crate
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: test
         run: cargo test --workspace
+
+  thumb:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: system libraries for the Tauri app crate
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev
+      - name: clippy with the thumb feature
+        run: cargo clippy --workspace --all-targets --features pdsim-cli/thumb -- -D warnings
+      - name: Thumb vs Unicorn lockstep and fuzz
+        run: cargo test -p pdsim-arm --features unicorn,thumb --test lockstep --test thumb_vs_unicorn
+      - name: GPL-free (thumb-only) build
+        run: |
+          cargo build -p pdsim-cli --no-default-features --features thumb
+          tree=$(cargo tree -p pdsim-cli --no-default-features --features thumb)
+          if grep -i unicorn <<<"$tree"; then
+            echo "thumb-only build pulls in Unicorn" >&2
+            exit 1
+          fi
+      - name: report parity (skips without the SDK and ELFs)
+        run: scripts/thumb-parity.sh
+
+  wasm:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: wasm32-unknown-emscripten
+      - uses: Swatinem/rust-cache@v2
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 6.0.13
+          actions-cache-folder: emsdk-cache
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: native/WASM parity
+        run: scripts/wasm-parity.sh
+      - name: build the web bundle for the smoke test
+        run: cargo build --release -p pdsim-wasm --target wasm32-unknown-emscripten --bin pdsim-web
+      - name: browser build smoke test (under Node)
+        run: node scripts/wasm-web-smoke.mjs
+      - name: app tests and web build
+        working-directory: app
+        run: |
+          npm ci
+          npm test
+          npm run build:web
+      - name: wasm size
+        run: |
+          ls -l app/dist/pdsim_web.wasm
+          echo "gzipped: $(gzip -9 -c app/dist/pdsim_web.wasm | wc -c) bytes"

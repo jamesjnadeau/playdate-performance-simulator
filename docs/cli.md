@@ -33,6 +33,7 @@ Games run from source: PNG images and `.fnt` fonts, not a compiled `.pdx`.
 | `--calibration FILE` | built-in estimates | Calibration profile, e.g. `calibration/rev-a.json`. |
 | `--data-dir DIR` | `$TMPDIR/pdsim-data/<game>` | Where the game's saved data lives (`playdate.datastore`, `playdate.file` writes). Reads look here first, then in the game folder. |
 | `--sdk DIR` | `$PLAYDATE_SDK_PATH` | Playdate SDK, for CoreLibs, the system font and (C games) `pd_api.h`. |
+| `--cpu unicorn\|thumb` | `unicorn` if built in, else `thumb` | CPU emulator for C games. `thumb` is the pure-Rust interpreter and needs a build with `--features thumb`, and `unicorn` needs `--features unicorn` (an alias for the default `c-games`); both give byte-identical reports. Asking for a backend this build lacks prints `pdsim: this build has no <name> CPU (rebuild with --features <name>)` and exits 2. |
 | `--no-profile` | off | Skip per-function attribution. Faster; the report has no hotspots. |
 | `--max-over-budget N` | none | Exit 1 if more than `N` frames go over budget. |
 | `--max-avg-ms X` | none | Exit 1 if the average frame work exceeds `X` ms. |
@@ -145,7 +146,9 @@ flame-graph tools take; it is absent with `--no-profile`.
 
 Serves a live session over WebSocket on `127.0.0.1` for the web build of
 the app (`npm run dev` in `app/`). If `GAME` is given, it loads when a UI
-connects. See [session-protocol.md](session-protocol.md) for the messages.
+connects. A plain browser runs the simulator in-page by default, so open the
+app with `?backend=ws` (or `?ws=ws://host:port`) to use this server. See
+[session-protocol.md](session-protocol.md) for the messages.
 
 ## `pdsim default-calibration`
 

@@ -1,0 +1,11 @@
+[package]
+name = "pdsim-thumb"
+description = "A pure-Rust ARMv7E-M Thumb-2 + FPv5 (single precision) interpreter behind the pdsim-cpu Cpu trait"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+pdsim-cpu = { path = "../pdsim-cpu" }

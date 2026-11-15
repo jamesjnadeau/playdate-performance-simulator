@@ -6,3 +6,6 @@ dist
 *.pdx
 /app/src-tauri/gen
 /.claude/worktrees
+/tests/thumb-corpus/*.elf
+/tests/thumb-corpus/gen_*.c
+/tests/thumb-corpus/build

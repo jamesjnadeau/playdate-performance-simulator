@@ -51,6 +51,27 @@ pub fn detect(path: &Path) -> Result<GameKind, GameError> {
     )))
 }
 
+/// Which CPU emulator runs a C game (exists when C games are supported).
+#[cfg(any(feature = "c-games", feature = "thumb"))]
+pub use pdsim_arm::Backend as CpuBackend;
+
+/// The CPU a build uses unless told otherwise: Unicorn when it is compiled
+/// in, otherwise the Thumb interpreter.
+#[cfg(feature = "c-games")]
+pub const DEFAULT_CPU: &str = "unicorn";
+#[cfg(not(feature = "c-games"))]
+pub const DEFAULT_CPU: &str = "thumb";
+
+#[cfg(feature = "c-games")]
+fn default_cpu() -> CpuBackend {
+    CpuBackend::Unicorn
+}
+
+#[cfg(all(feature = "thumb", not(feature = "c-games")))]
+fn default_cpu() -> CpuBackend {
+    CpuBackend::Thumb
+}
+
 /// How to run a game.
 #[derive(Debug, Clone)]
 pub struct RunConfig {
@@ -62,6 +83,30 @@ pub struct RunConfig {
     pub sdk: Option<PathBuf>,
     /// Attribute cycles to functions.
     pub profile: bool,
+    /// The CPU emulator for C games.
+    #[cfg(any(feature = "c-games", feature = "thumb"))]
+    pub cpu: CpuBackend,
+}
+
+impl RunConfig {
+    /// Picks the CPU emulator by name (`unicorn` or `thumb`). `Err` carries
+    /// the name when this build doesn't include that backend.
+    #[cfg_attr(not(any(feature = "c-games", feature = "thumb")), allow(unused_variables))]
+    pub fn set_cpu(&mut self, name: &str) -> Result<(), String> {
+        match name {
+            #[cfg(feature = "c-games")]
+            "unicorn" => {
+                self.cpu = CpuBackend::Unicorn;
+                Ok(())
+            }
+            #[cfg(feature = "thumb")]
+            "thumb" => {
+                self.cpu = CpuBackend::Thumb;
+                Ok(())
+            }
+            _ => Err(name.to_string()),
+        }
+    }
 }
 
 impl Default for RunConfig {
@@ -71,6 +116,8 @@ impl Default for RunConfig {
             data_dir: None,
             sdk: Device::sdk_from_env(),
             profile: true,
+            #[cfg(any(feature = "c-games", feature = "thumb"))]
+            cpu: default_cpu(),
         }
     }
 }
@@ -112,12 +159,39 @@ pub fn load(path: &Path, cfg: &RunConfig) -> Result<Box<dyn Game>, GameError> {
     }
 }
 
+/// Shown when a C game is loaded without an SDK. The browser UI matches on
+/// "Load your SDK folder" in the emscripten text.
+#[cfg(all(any(feature = "c-games", feature = "thumb"), not(target_os = "emscripten")))]
+const SDK_NEEDED: &str =
+    "C games need the Playdate SDK's C_API headers. Set PLAYDATE_SDK_PATH or pass --sdk.";
+#[cfg(all(any(feature = "c-games", feature = "thumb"), target_os = "emscripten"))]
+const SDK_NEEDED: &str =
+    "C games need the Playdate SDK's C_API headers. Load your SDK folder (it is kept in this browser).";
+
+#[cfg(not(any(feature = "c-games", feature = "thumb")))]
+fn load_c(
+    _dev: pdsim_device::SharedDevice,
+    _elf: &Path,
+    _cfg: &RunConfig,
+) -> Result<Box<dyn Game>, GameError> {
+    Err(GameError(
+        "C games are not supported in this build (built without the c-games feature)".into(),
+    ))
+}
+
+#[cfg(any(feature = "c-games", feature = "thumb"))]
 fn load_c(dev: pdsim_device::SharedDevice, elf: &Path, cfg: &RunConfig) -> Result<Box<dyn Game>, GameError> {
+    if cfg.sdk.is_none() {
+        // The API layout is read from the SDK's C_API headers. The native
+        // build looks at PLAYDATE_SDK_PATH (via RunConfig::default) or --sdk.
+        return Err(GameError(SDK_NEEDED.to_string()));
+    }
     Ok(Box::new(pdsim_arm::ArmGame::load(
         dev,
         elf,
         cfg.sdk.as_deref(),
         cfg.profile,
+        cfg.cpu,
     )?))
 }
 
@@ -130,5 +204,33 @@ mod tests {
         let ex = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/lua-stress");
         assert!(matches!(detect(&ex).unwrap(), GameKind::Lua(p) if p.ends_with("Source")));
         assert!(detect(Path::new("/nonexistent")).is_err());
+    }
+
+    #[cfg(not(any(feature = "c-games", feature = "thumb")))]
+    #[test]
+    fn c_games_need_the_feature() {
+        let dir = std::env::temp_dir().join(format!("pdsim-runner-no-c-games-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("pdex.elf"), b"").unwrap();
+        let err = load(&dir, &RunConfig::default()).err().unwrap();
+        assert!(err.0.contains("c-games feature"), "{}", err.0);
+    }
+
+    #[cfg(any(feature = "c-games", feature = "thumb"))]
+    #[test]
+    fn c_game_without_sdk_names_the_sdk() {
+        let ex = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/c-stress");
+        let cfg = RunConfig {
+            sdk: None,
+            data_dir: Some(
+                std::env::temp_dir().join(format!("pdsim-runner-no-sdk-data-{}", std::process::id())),
+            ),
+            ..RunConfig::default()
+        };
+        let err = load(&ex, &cfg).err().expect("loading without an SDK must fail");
+        #[cfg(target_os = "emscripten")]
+        assert!(err.0.contains("Load your SDK folder"), "{}", err.0);
+        #[cfg(not(target_os = "emscripten"))]
+        assert!(err.0.contains("PLAYDATE_SDK_PATH"), "{}", err.0);
     }
 }

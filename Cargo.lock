@@ -2451,8 +2451,10 @@ dependencies = [
  "capstone",
  "goblin",
  "pdsim-core",
+ "pdsim-cpu",
  "pdsim-device",
  "pdsim-gfx",
+ "pdsim-thumb",
  "unicorn-engine",
 ]
 
@@ -2479,6 +2481,10 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
 ]
+
+[[package]]
+name = "pdsim-cpu"
+version = "0.1.0"
 
 [[package]]
 name = "pdsim-device"
@@ -2532,6 +2538,22 @@ dependencies = [
  "pdsim-device",
  "pdsim-runner",
  "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "pdsim-thumb"
+version = "0.1.0"
+dependencies = [
+ "pdsim-cpu",
+]
+
+[[package]]
+name = "pdsim-wasm"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "pdsim-session",
  "serde_json",
 ]
 

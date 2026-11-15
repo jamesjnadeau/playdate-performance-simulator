@@ -1,4 +1,7 @@
 import { connect, type Event } from "./backend";
+import { hostBehind, type PacingSample } from "./wasm/pacing";
+import { gameName, gamePaths, needsSdk, readKept, sdkPaths, traceFileName, unzipEntries } from "./wasm/files";
+import { fromDrop, fromInput, isZip, type Picked } from "./wasm/pick";
 import {
   CATEGORIES, SERIES, MEM_COLORS, MEM_LABELS, buildFlame, drawFlame, drawFrames, drawGauge, drawMemory,
   type BarLayout, type FlameRect, type FrameLite,
@@ -89,15 +92,15 @@ pathInput.value = localStorageGet("pdsim.path") ?? "";
 const calibInput = $<HTMLInputElement>("calibPath");
 calibInput.value = localStorageGet("pdsim.calibration") ?? "";
 function open() {
-  const path = pathInput.value.trim();
+  const path = backend.kind === "wasm" ? "/game" : pathInput.value.trim();
   if (!path) return;
-  localStorageSet("pdsim.path", path);
+  if (backend.kind !== "wasm") localStorageSet("pdsim.path", path);
   localStorageSet("pdsim.calibration", calibInput.value.trim());
   frames.length = 0;
   selected = null;
   flameRoot = null;
   $("log").textContent = "";
-  backend.send({ type: "load", path, calibration: calibInput.value.trim() || null });
+  backend.send({ type: "load", path, calibration: backend.kind === "wasm" ? null : calibInput.value.trim() || null });
 }
 $("open").onclick = open;
 pathInput.onkeydown = (e) => e.key === "Enter" && open();
@@ -110,6 +113,79 @@ $<HTMLSelectElement>("mode").onchange = (e) => backend.send({ type: "setMode", m
 $<HTMLInputElement>("break").onchange = (e) => backend.send({ type: "breakOnOverBudget", on: (e.target as HTMLInputElement).checked });
 $("trace").onclick = () => backend.send({ type: "exportTrace" });
 
+// ---- loading files in the browser (wasm backend only)
+let sdkLoaded = false; // set by the worker's "sdk" event
+if (backend.kind === "wasm") {
+  for (const id of ["path", "calibPath", "open"]) $(id).hidden = true;
+  for (const id of ["dropzone", "sdkBtn", "sdkStatus"]) $(id).hidden = false;
+  const folderInput = $<HTMLInputElement>("folderInput");
+  const zipInput = $<HTMLInputElement>("zipInput");
+  const sdkInput = $<HTMLInputElement>("sdkInput");
+  const zone = $("dropzone");
+
+  const send = async (root: "/game" | "/sdk", picked: Picked[], paths: Map<string, string>, name?: string) => {
+    const kept = await readKept(picked, paths, (p) => p.read());
+    const files = kept.map((k) => ({ path: k.dest.slice(root.length + 1), data: k.data }));
+    backend.loadFiles!(root, files, name);
+    return files.length;
+  };
+  const SDK_PROMPT = "C games need the Playdate SDK's C_API headers. Load your SDK folder (it is kept in this browser).";
+  const wantSdk = (on: boolean) => $("sdkBtn").classList.toggle("needed", on);
+  let pendingGame: Picked[] | null = null; // a C game waiting for the SDK
+  const loadGame = async (picked: Picked[]) => {
+    if (isZip(picked)) {
+      try {
+        const entries = unzipEntries(new Uint8Array(await picked[0].read()));
+        picked = entries.map((en) => ({ path: en.path, read: async () => en.data }));
+      } catch (err) { toast(`Could not read the zip: ${err}`, true); return; }
+    }
+    const paths = gamePaths(picked);
+    if (paths.size === 0) { toast("No game files found.", true); return; }
+    if (needsSdk(picked) && !sdkLoaded) {
+      pendingGame = picked;
+      wantSdk(true);
+      toast(SDK_PROMPT, true);
+      return;
+    }
+    pendingGame = null;
+    await send("/game", picked, paths, gameName(picked));
+    open();
+  };
+  const loadSdk = async (picked: Picked[]) => {
+    const paths = sdkPaths(picked);
+    if (paths.size === 0) { toast("That folder has no C_API or CoreLibs; pick the PlaydateSDK folder.", true); return; }
+    const n = await send("/sdk", picked, paths);
+    toast(`Loaded ${n} SDK files.`);
+    sdkLoaded = true;
+    wantSdk(false);
+    const waiting = pendingGame;
+    if (waiting) await loadGame(waiting);
+  };
+  const guard = (f: () => Promise<void>) => f().catch((err) => toast(`Could not read the files: ${err}`, true));
+  // Reset the input afterwards so picking the same thing again fires `change`.
+  const pick = (input: HTMLInputElement, load: (p: Picked[]) => Promise<void>) => () => {
+    if (!input.files) return;
+    const picked = fromInput(input.files);
+    guard(() => load(picked)).finally(() => (input.value = ""));
+  };
+
+  $("openFolder").onclick = (e) => { e.stopPropagation(); folderInput.click(); };
+  zone.onclick = () => zipInput.click();
+  folderInput.onchange = pick(folderInput, loadGame);
+  zipInput.onchange = pick(zipInput, loadGame);
+  $("sdkBtn").onclick = () => sdkInput.click();
+  sdkInput.onchange = pick(sdkInput, loadSdk);
+  for (const t of ["dragenter", "dragover"]) {
+    window.addEventListener(t, (e) => { e.preventDefault(); zone.classList.add("over"); });
+  }
+  window.addEventListener("dragleave", () => zone.classList.remove("over"));
+  window.addEventListener("drop", (e) => {
+    e.preventDefault();
+    zone.classList.remove("over");
+    if (e.dataTransfer) guard(async () => loadGame(await fromDrop(e.dataTransfer!)));
+  });
+}
+
 function localStorageGet(k: string): string | null {
   try { return localStorage.getItem(k); } catch { return null; }
 }
@@ -117,13 +193,14 @@ function localStorageSet(k: string, v: string) {
   try { localStorage.setItem(k, v); } catch { /* ignore */ }
 }
 
-function toast(msg: string, error = false) {
+function toast(msg: string, error = false, sticky = false) {
   const t = $("toast");
   t.textContent = msg;
   t.className = error ? "toast error" : "toast";
   t.style.display = "block";
+  t.onclick = () => (t.style.display = "none");
   clearTimeout((toast as any).timer);
-  (toast as any).timer = setTimeout(() => (t.style.display = "none"), error ? 12000 : 4000);
+  if (!sticky) (toast as any).timer = setTimeout(() => (t.style.display = "none"), error ? 12000 : 4000);
 }
 
 // ---- input
@@ -322,6 +399,33 @@ function schedule() {
   });
 }
 
+function downloadText(name: string, text: string) {
+  const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// "Host slower than device": in the in-browser engine, device time falling
+// behind real time in device mode (the stats events have no explicit signal).
+let pacing: { device: boolean; speed: number; last: PacingSample | null } = { device: false, speed: 1, last: null };
+function setHostSlow(slow: boolean) {
+  $("hostSlow").hidden = !slow;
+}
+function watchPacing(e: Event) {
+  if (backend.kind !== "wasm" || !pacing.device) return;
+  const cur = { wallMs: performance.now(), deviceMs: e.deviceMs as number };
+  if (!pacing.last) { pacing.last = cur; return; }
+  const behind = hostBehind(pacing.last, cur, pacing.speed);
+  if (behind === null) return;
+  setHostSlow(behind);
+  pacing.last = cur;
+}
+
 backend.onEvent((e) => {
   switch (e.type) {
     case "frame":
@@ -329,6 +433,7 @@ backend.onEvent((e) => {
       schedule();
       break;
     case "stats":
+      watchPacing(e);
       frames.push(...e.frames);
       if (frames.length > MAX_FRAMES) frames.splice(0, frames.length - MAX_FRAMES);
       updateTiles(e);
@@ -350,6 +455,8 @@ backend.onEvent((e) => {
       playBtn.textContent = running ? "Pause" : "Play";
       $<HTMLSelectElement>("mode").value = e.mode;
       $<HTMLInputElement>("break").checked = e.breakOnOverBudget;
+      pacing = { device: e.mode === "device" && e.running, speed: e.speed ?? 1, last: null };
+      setHostSlow(false);
       break;
     case "loaded":
       cpuHz = e.cpuHz;
@@ -358,6 +465,11 @@ backend.onEvent((e) => {
       $("calib").textContent = e.calibration;
       $("calib").classList.toggle("est", e.estimated);
       toast(e.description);
+      break;
+    case "sdk":
+      sdkLoaded = e.loaded;
+      if (e.loaded) $("sdkBtn").classList.remove("needed");
+      $("sdkStatus").textContent = e.loaded ? "SDK: loaded" : "SDK: none (using built-in CoreLibs stand-ins)";
       break;
     case "log": {
       const log = $("log");
@@ -372,8 +484,14 @@ backend.onEvent((e) => {
     case "traceExported":
       toast(`Trace of ${e.frames} frames written to ${e.path}\nOpen it in ui.perfetto.dev or chrome://tracing.`);
       break;
+    case "traceData":
+      downloadText(traceFileName(e.frame), JSON.stringify(e.trace));
+      toast(`Trace of ${e.frames} frames downloaded as ${traceFileName(e.frame)}\nOpen it in ui.perfetto.dev or chrome://tracing.`);
+      break;
     case "error":
-      toast(e.message, true);
+      if (e.message.includes("Load your SDK folder")) $("sdkBtn").classList.add("needed");
+      toast(e.message, true, !!e.fatal); // a fatal startup failure stays up
+      if (e.fatal) $("log").textContent += e.message + "\n";
       break;
   }
 });

@@ -77,3 +77,87 @@ fn ci_limits_fail_the_run() {
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("over budget"));
 }
+
+/// Runs `examples/c-stress` for 60 frames with `args` and returns the report
+/// file, or `None` when there is no built ELF or no SDK (the SDK supplies
+/// `pd_api.h`, which C games need).
+#[cfg(all(feature = "c-games", feature = "thumb"))]
+fn run_c_stress(args: &[&str]) -> Option<PathBuf> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    if !root.join("examples/c-stress/Source/pdex.elf").exists()
+        || pdsim_device::Device::sdk_from_env().is_none()
+    {
+        eprintln!("examples/c-stress/Source/pdex.elf or PLAYDATE_SDK_PATH missing; skipping");
+        return None;
+    }
+    let tag = args.join("_");
+    let tmp = std::env::temp_dir().join(format!("pdsim-cli-c-{tag}-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let report = tmp.join("r.json");
+    let out = Command::new(env!("CARGO_BIN_EXE_pdsim"))
+        .args(["run", "examples/c-stress", "--frames", "60", "-q"])
+        .args(args)
+        .arg("--data-dir")
+        .arg(tmp.join("data"))
+        .arg("--report")
+        .arg(&report)
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    Some(report)
+}
+
+#[cfg(all(feature = "c-games", feature = "thumb"))]
+#[test]
+fn thumb_and_unicorn_reports_are_identical() {
+    let (Some(a), Some(b)) = (
+        run_c_stress(&["--cpu", "unicorn"]),
+        run_c_stress(&["--cpu", "thumb"]),
+    ) else {
+        return;
+    };
+    assert_eq!(std::fs::read(a).unwrap(), std::fs::read(b).unwrap());
+}
+
+/// Asks for a CPU backend this build doesn't have: the message and exit code
+/// are part of the CLI's contract.
+#[cfg(any(not(feature = "thumb"), not(feature = "c-games")))]
+fn missing_backend(name: &str) {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let out = Command::new(env!("CARGO_BIN_EXE_pdsim"))
+        .args(["run", "examples/lua-stress", "--frames", "1", "-q", "--cpu", name])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        err.trim(),
+        format!("pdsim: this build has no {name} CPU (rebuild with --features {name})")
+    );
+}
+
+#[cfg(not(feature = "thumb"))]
+#[test]
+fn a_backend_that_is_not_built_in_exits_2() {
+    missing_backend("thumb");
+}
+
+#[cfg(not(feature = "c-games"))]
+#[test]
+fn unicorn_not_built_in_exits_2() {
+    missing_backend("unicorn");
+}
+
+/// A Lua run with no `--cpu` works in every build, even one without C games.
+#[test]
+fn a_lua_run_needs_no_cpu_backend() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let out = Command::new(env!("CARGO_BIN_EXE_pdsim"))
+        .args(["run", "examples/lua-stress", "--frames", "5", "-q"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+}

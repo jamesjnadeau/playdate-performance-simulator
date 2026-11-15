@@ -77,6 +77,28 @@ make -C examples/c-stress device_bin
 cargo run --release -p pdsim-cli -- run examples/c-stress --frames 300
 ```
 
+## Run in the browser
+
+The simulator also runs entirely in a browser tab: no server, no install.
+Lua games run as they are; the Playdate SDK is optional (without it the
+built-in CoreLibs stand-ins are used). C games run too, on the pure-Rust Thumb
+interpreter, but they need the SDK's `C_API` headers: use "Load Playdate SDK
+folder..." once. The SDK is kept in your browser, so you don't load it again
+(nothing from the SDK is bundled or uploaded).
+
+```bash
+source ~/emsdk/emsdk_env.sh             # Emscripten 6.0.13, and: rustup target add wasm32-unknown-emscripten
+cd app && npm ci && npm run build:web   # writes app/dist
+npx vite preview --outDir dist          # open the printed URL
+```
+
+Drop a game folder or `.zip` on the page. The result in `app/dist` is a static
+site with relative URLs, so it also works from a subpath. The Pages workflow
+publishes it on every push to `main`, at
+<https://jamesjnadeau.github.io/playdate-performance-simulator/>. In a plain browser the page uses the in-browser engine by default; add
+`?backend=ws` (or `?ws=ws://host:8765`) to talk to `pdsim serve` instead.
+Traces are downloaded as `pdsim-trace-<frame>.json`.
+
 ## CLI
 
 ```text
@@ -141,7 +163,7 @@ to fit them to your device in a few minutes, and
 | `tools/fit-calibration` | fits a profile to device timings |
 | `.claude/skills/playdate-perf-test` | skill for AI agents that test a game's performance with this repo |
 | `examples/` | Lua and C samples with known hot paths |
-| `docs/` | [testing your game](docs/testing-games.md), [CLI reference](docs/cli.md), [architecture](docs/architecture.md), [session protocol](docs/session-protocol.md), [calibration](docs/calibration.md), [accuracy](docs/accuracy.md) |
+| `docs/` | [testing your game](docs/testing-games.md), [CLI reference](docs/cli.md), [architecture](docs/architecture.md), [session protocol](docs/session-protocol.md), [calibration](docs/calibration.md), [accuracy](docs/accuracy.md), [browser (WASM) port plan](docs/wasm-port.md) |
 
 ## Development
 
@@ -160,10 +182,16 @@ Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
 
 Third-party code: Lua 5.4.9 (MIT, vendored in `crates/pdsim-lua/vendor`),
 DejaVu Sans Mono glyphs for the fallback font (Bitstream Vera license). The
-C backend links the [Unicorn](https://www.unicorn-engine.org/) emulator,
-which is licensed under the **GPL v2**: binaries that include `pdsim-arm`
-(the CLI, the app) are therefore distributed under the GPL's terms. The
+default C backend links the [Unicorn](https://www.unicorn-engine.org/)
+emulator, which is licensed under the **GPL v2**: binaries built with Unicorn
+(`pdsim-arm`'s `unicorn` feature, on by default in the CLI and the app) are
+therefore distributed under the GPL's terms. The
 source code in this repository remains MIT OR Apache-2.0.
+
+A build with `--no-default-features --features thumb` (for example
+`cargo build -p pdsim-cli --no-default-features --features thumb`) runs C
+games on the pure-Rust Thumb interpreter instead. It has no Unicorn, so it
+carries no GPL obligation. Pick the CPU with `pdsim run --cpu unicorn|thumb`.
 
 This project is not affiliated with Panic Inc. The Playdate SDK is not
 included and must never be committed to this repository; the simulator reads

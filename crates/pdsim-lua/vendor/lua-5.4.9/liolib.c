@@ -154,6 +154,13 @@ static int l_checkmode (const char *mode) {
 
 typedef luaL_Stream LStream;
 
+/* pdsim: device (ARM32) size of LStream, for memory accounting */
+#define PDSIM_DSIZE_LSTREAM	8
+#include <stdint.h>
+#if UINTPTR_MAX == 0xffffffffu
+_Static_assert(sizeof(LStream) == PDSIM_DSIZE_LSTREAM, "LStream");
+#endif
+
 
 #define tolstream(L)	((LStream *)luaL_checkudata(L, 1, LUA_FILEHANDLE))
 
@@ -199,7 +206,8 @@ static FILE *tofile (lua_State *L) {
 ** handle is in a consistent state.
 */
 static LStream *newprefile (lua_State *L) {
-  LStream *p = (LStream *)lua_newuserdatauv(L, sizeof(LStream), 0);
+  LStream *p = (LStream *)pdsim_newuserdatauv(L, sizeof(LStream), 0,
+                                            PDSIM_DSIZE_LSTREAM);
   p->closef = NULL;  /* mark file handle as 'closed' */
   luaL_setmetatable(L, LUA_FILEHANDLE);
   return p;

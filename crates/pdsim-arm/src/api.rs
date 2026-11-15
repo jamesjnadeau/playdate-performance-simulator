@@ -6,13 +6,11 @@
 //! Functions with no implementation return 0 and are reported once.
 
 use crate::abi::{self, Arg};
+use crate::cpu::Cpu;
 use crate::emu::*;
 use pdsim_core::{Category, Work};
 use pdsim_gfx::sprite::{CollisionResponse, DrawItem, RectF};
 use pdsim_gfx::*;
-use unicorn_engine::Unicorn;
-
-type Uc<'a> = Unicorn<'a, ArmState>;
 
 /// An open file.
 #[derive(Debug, Clone, Default)]
@@ -49,11 +47,11 @@ fn sid(h: u32) -> Option<u32> {
         .then(|| (h - SPRITE_BASE) / 16)
 }
 
-fn color(uc: &Uc, v: u32) -> Color {
+fn color(cpu: &dyn Cpu<ArmState>, v: u32) -> Color {
     if v <= 3 {
         return Color::from_index(v as i64);
     }
-    let b = uc.bytes(v, 16);
+    let b = cpu.bytes(v, 16);
     if b.len() < 16 {
         return Color::Black;
     }
@@ -75,28 +73,35 @@ fn ru(a: &[Arg], i: usize) -> u32 {
 }
 
 /// Runs a graphics call with the frame mirror kept in sync and charges it.
-fn gfx<F: FnOnce(&mut Uc, &mut Graphics) -> Work>(uc: &mut Uc, name: &str, f: F) {
-    ArmGame::before_gfx(uc);
-    let dev = uc.get_data().dev.clone();
+fn gfx<F: FnOnce(&mut dyn Cpu<ArmState>, &mut Graphics) -> Work>(
+    cpu: &mut dyn Cpu<ArmState>,
+    st: &mut ArmState,
+    name: &str,
+    f: F,
+) {
+    ArmGame::before_gfx(cpu, st);
+    let dev = st.dev.clone();
     let w = {
         let mut d = dev.borrow_mut();
-        f(uc, &mut d.gfx)
+        f(cpu, &mut d.gfx)
     };
-    ArmGame::after_gfx(uc);
-    uc.get_data_mut().charge_api(Category::Gfx, name, w);
+    ArmGame::after_gfx(cpu, st);
+    st.charge_api(Category::Gfx, name, w);
 }
 
-fn charge(uc: &mut Uc, cat: Category, name: &str, w: Work) {
-    uc.get_data_mut().charge_api(cat, name, w);
+fn charge(st: &mut ArmState, cat: Category, name: &str, w: Work) {
+    st.charge_api(cat, name, w);
 }
 
 /// Text passed as (pointer, length, encoding).
-fn text(uc: &Uc, ptr: u32, len: u32, enc: u32) -> String {
+fn text(cpu: &dyn Cpu<ArmState>, ptr: u32, len: u32, enc: u32) -> String {
     let len = len.min(1 << 16) as usize;
-    let b = uc.bytes(ptr, len);
+    let b = cpu.bytes(ptr, len);
     match enc {
         // kUTF16Encoding
         2 => {
+            // as_chunks needs Rust 1.88; the crate supports 1.80.
+            #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
             let u: Vec<u16> = b
                 .chunks_exact(2)
                 .map(|c| u16::from_le_bytes([c[0], c[1]]))
@@ -112,40 +117,39 @@ fn text(uc: &Uc, ptr: u32, len: u32, enc: u32) -> String {
 }
 
 /// Writes a string into scratch memory and returns its address.
-fn put_str(uc: &mut Uc, s: &str) -> u32 {
-    let a = uc.get_data_mut().scratch(s.len() as u32 + 1);
+fn put_str(cpu: &mut dyn Cpu<ArmState>, st: &mut ArmState, s: &str) -> u32 {
+    let a = st.scratch(s.len() as u32 + 1);
     let mut b = s.as_bytes().to_vec();
     b.push(0);
-    uc.write(a, &b);
+    cpu.write(a, &b);
     a
 }
 
 /// Allocates from the game heap and writes the chunk-size word that newlib's
 /// `calloc` reads from in front of the pointer.
-fn heap_alloc(uc: &mut Uc, n: u32) -> u32 {
-    let Some(p) = uc.get_data_mut().heap.alloc(n) else {
+fn heap_alloc(cpu: &mut dyn Cpu<ArmState>, st: &mut ArmState, n: u32) -> u32 {
+    let Some(p) = st.heap.alloc(n) else {
         return 0;
     };
-    let word = uc.get_data().heap.chunk_word(p);
-    uc.w32(p - 4, word);
+    let word = st.heap.chunk_word(p);
+    cpu.w32(p - 4, word);
     p
 }
 
 /// Writes an array of u32 to the heap; returns its address and writes the
 /// count to `len_ptr`.
-fn put_array(uc: &mut Uc, v: &[u32], len_ptr: u32) -> u32 {
-    uc.w32(len_ptr, v.len() as u32);
+fn put_array(cpu: &mut dyn Cpu<ArmState>, st: &mut ArmState, v: &[u32], len_ptr: u32) -> u32 {
+    cpu.w32(len_ptr, v.len() as u32);
     if v.is_empty() {
         return 0;
     }
-    let a = heap_alloc(uc, v.len() as u32 * 4);
+    let a = heap_alloc(cpu, st, v.len() as u32 * 4);
     let b: Vec<u8> = v.iter().flat_map(|x| x.to_le_bytes()).collect();
-    uc.write(a, &b);
+    cpu.write(a, &b);
     a
 }
 
-fn resolve_font(uc: &Uc, path: &str) -> Option<std::path::PathBuf> {
-    let st = uc.get_data();
+fn resolve_font(st: &ArmState, path: &str) -> Option<std::path::PathBuf> {
     let d = st.dev.borrow();
     if let Some(name) = path.strip_prefix("/System/Fonts/") {
         let stem = name.trim_end_matches(".pft").trim_end_matches(".fnt");
@@ -198,56 +202,56 @@ fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
 const PD_EPOCH: i64 = 946_684_800;
 
 /// Handles one API call.
-pub fn dispatch(uc: &mut Uc, idx: usize) {
-    let Some((name, sig)) = uc.get_data().funcs.get(idx).cloned() else {
+pub fn dispatch(cpu: &mut dyn Cpu<ArmState>, st: &mut ArmState, idx: usize) {
+    let Some((name, sig)) = st.funcs.get(idx).cloned() else {
         return;
     };
     // Decode fixed args; format variadic strings while the cursor is alive.
     let (a, formatted) = {
-        let regs = Regs(uc);
+        let regs = Regs(&*cpu);
         let (args, mut cur) = abi::decode(&regs, &sig);
         let formatted = if sig.variadic {
             // The format string is the last fixed argument.
-            let fmt = args.last().map(|x| uc.cstr(x.u())).unwrap_or_default();
-            Some(abi::format(&fmt, &mut cur, &|p| uc.cstr(p)))
+            let fmt = args.last().map(|x| cpu.cstr(x.u())).unwrap_or_default();
+            Some(abi::format(&fmt, &mut cur, &|p| cpu.cstr(p)))
         } else {
             None
         };
         (args, formatted)
     };
-    let ret = run(uc, &name, &a, formatted).or_else(|| stub(uc, idx, &name, &sig));
+    let ret = run(cpu, st, &name, &a, formatted).or_else(|| stub(st, idx, &name, &sig));
     let ret = match ret {
         Some(r) => r,
         None => {
-            let first = uc.get_data_mut().unimplemented.insert(idx);
+            let first = st.unimplemented.insert(idx);
             if first {
                 let msg = format!("[pdsim] C API {name} is not simulated (returns 0)");
-                uc.get_data().dev.borrow_mut().log_line(msg);
+                st.dev.borrow_mut().log_line(msg);
             }
-            charge(uc, Category::Other, &name, Work::default());
+            charge(st, Category::Other, &name, Work::default());
             Ret::I(0)
         }
     };
-    set_ret(uc, sig.ret, ret);
+    set_ret(cpu, sig.ret, ret);
 }
 
 /// Sound, Lua, JSON, scoreboards and networking are not simulated. Sound
 /// objects still get non-null handles, and playing charges the calibrated
 /// sound cost, so games keep running and their audio calls show up.
-fn stub(uc: &mut Uc, idx: usize, name: &str, sig: &crate::layout::Signature) -> Option<Ret> {
+fn stub(st: &mut ArmState, idx: usize, name: &str, sig: &crate::layout::Signature) -> Option<Ret> {
     if !name.starts_with("sound.") {
         return None;
     }
     let leaf = name.rsplit('.').next().unwrap_or("");
-    if uc.get_data_mut().unimplemented.insert(idx) && !uc.get_data().unimplemented.contains(&usize::MAX) {
-        uc.get_data_mut().unimplemented.insert(usize::MAX);
+    if st.unimplemented.insert(idx) && !st.unimplemented.contains(&usize::MAX) {
+        st.unimplemented.insert(usize::MAX);
         let msg =
             "[pdsim] sound is not simulated: sound calls succeed silently and charge a flat cost".to_string();
-        uc.get_data().dev.borrow_mut().log_line(msg);
+        st.dev.borrow_mut().log_line(msg);
     }
     if leaf.starts_with("play") {
         charge(
-            uc,
+            st,
             Category::Audio,
             if leaf.contains("Note") {
                 "sound.playNote"
@@ -258,7 +262,7 @@ fn stub(uc: &mut Uc, idx: usize, name: &str, sig: &crate::layout::Signature) -> 
         );
         return Some(Ret::I(1));
     }
-    charge(uc, Category::Audio, "sound.update", Work::default());
+    charge(st, Category::Audio, "sound.update", Work::default());
     match sig.ret {
         Some(crate::layout::Kind::Int)
             if leaf.starts_with("new")
@@ -274,15 +278,21 @@ fn stub(uc: &mut Uc, idx: usize, name: &str, sig: &crate::layout::Signature) -> 
     }
 }
 
-fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
-    let dev = uc.get_data().dev.clone();
+fn run(
+    cpu: &mut dyn Cpu<ArmState>,
+    st: &mut ArmState,
+    name: &str,
+    a: &[Arg],
+    fmt: Option<String>,
+) -> Option<Ret> {
+    let dev = st.dev.clone();
     let none = Some(Ret::None);
     let r = match name {
         // ------------------------------------------------------------ system
         "system.realloc" => {
             let (ptr, size) = (ru(a, 0), ru(a, 1));
             charge(
-                uc,
+                st,
                 Category::Other,
                 "system.realloc",
                 Work {
@@ -290,7 +300,6 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
                     ..Default::default()
                 },
             );
-            let st = uc.get_data_mut();
             if size == 0 {
                 if ptr != 0 {
                     st.heap.free(ptr);
@@ -298,21 +307,21 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
                 return Some(Ret::I(0));
             }
             let old = if ptr != 0 { st.heap.size_of(ptr) } else { None };
-            let new = heap_alloc(uc, size);
+            let new = heap_alloc(cpu, st, size);
             if new == 0 {
                 return Some(Ret::I(0));
             }
             if let Some(n) = old {
-                let data = uc.bytes(ptr, n.min(size) as usize);
-                uc.write(new, &data);
-                uc.get_data_mut().heap.free(ptr);
+                let data = cpu.bytes(ptr, n.min(size) as usize);
+                cpu.write(new, &data);
+                st.heap.free(ptr);
             }
             Some(Ret::I(new))
         }
         "system.formatString" => {
             let s = fmt.unwrap_or_default();
             charge(
-                uc,
+                st,
                 Category::Other,
                 "system.formatString",
                 Work {
@@ -320,17 +329,17 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
                     ..Default::default()
                 },
             );
-            let p = heap_alloc(uc, s.len() as u32 + 1);
+            let p = heap_alloc(cpu, st, s.len() as u32 + 1);
             let mut b = s.as_bytes().to_vec();
             b.push(0);
-            uc.write(p, &b);
-            uc.w32(ru(a, 0), p);
+            cpu.write(p, &b);
+            cpu.w32(ru(a, 0), p);
             Some(Ret::I(s.len() as u32))
         }
         "system.logToConsole" => {
             let s = fmt.unwrap_or_default();
             charge(
-                uc,
+                st,
                 Category::Other,
                 "system.logToConsole",
                 Work {
@@ -344,19 +353,19 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
         "system.error" => {
             let s = fmt.unwrap_or_default();
             dev.borrow_mut().log_line(format!("error: {s}"));
-            uc.get_data_mut().error = Some(format!("pd->system->error: {s}"));
+            st.error = Some(format!("pd->system->error: {s}"));
             none
         }
         "system.getLanguage" => Some(Ret::I(0)),
         "system.getCurrentTimeMilliseconds" => {
-            uc.get_data_mut().sync();
+            st.sync();
             Some(Ret::I(dev.borrow().now_ms() as u32))
         }
         "system.getSecondsSinceEpoch" => {
-            uc.get_data_mut().sync();
+            st.sync();
             let ms = dev.borrow().now_ms();
             let t = (pdsim_device_epoch() - PD_EPOCH as f64) + ms / 1000.0;
-            uc.w32(ru(a, 0), (t.fract() * 1000.0) as u32);
+            cpu.w32(ru(a, 0), (t.fract() * 1000.0) as u32);
             Some(Ret::I(t as u32))
         }
         "system.drawFPS" => {
@@ -368,7 +377,7 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
                 }
             });
             let (x, y) = (ri(a, 0), ri(a, 1));
-            gfx(uc, "system.drawFPS", |_, g| {
+            gfx(cpu, st, "system.drawFPS", |_, g| {
                 let f = g.system_font();
                 let s = format!("{}", fps.round());
                 let (w, h) = g.text_size(f, &s);
@@ -381,18 +390,18 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
             none
         }
         "system.setUpdateCallback" => {
-            uc.get_data_mut().update_cb = Some((ru(a, 0), ru(a, 1)));
+            st.update_cb = Some((ru(a, 0), ru(a, 1)));
             none
         }
         "system.getButtonState" => {
-            charge(uc, Category::Other, "system.getButtonState", Work::default());
+            charge(st, Category::Other, "system.getButtonState", Work::default());
             let (c, p, r) = {
                 let d = dev.borrow();
                 (d.input.current, d.input.pushed, d.input.released)
             };
-            uc.w32(ru(a, 0), c as u32);
-            uc.w32(ru(a, 1), p as u32);
-            uc.w32(ru(a, 2), r as u32);
+            cpu.w32(ru(a, 0), c as u32);
+            cpu.w32(ru(a, 1), p as u32);
+            cpu.w32(ru(a, 2), r as u32);
             none
         }
         "system.setPeripheralsEnabled"
@@ -410,17 +419,17 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
         | "system.getServerTime" => none,
         "system.getAccelerometer" => {
             let (x, y, z) = dev.borrow().input.accel;
-            uc.wf32(ru(a, 0), x);
-            uc.wf32(ru(a, 1), y);
-            uc.wf32(ru(a, 2), z);
+            cpu.wf32(ru(a, 0), x);
+            cpu.wf32(ru(a, 1), y);
+            cpu.wf32(ru(a, 2), z);
             none
         }
         "system.getCrankChange" => {
-            charge(uc, Category::Other, "system.getCrankChange", Work::default());
+            charge(st, Category::Other, "system.getCrankChange", Work::default());
             Some(Ret::F(dev.borrow().input.crank_change))
         }
         "system.getCrankAngle" => {
-            charge(uc, Category::Other, "system.getCrankAngle", Work::default());
+            charge(st, Category::Other, "system.getCrankAngle", Work::default());
             Some(Ret::F(dev.borrow().input.crank_angle))
         }
         "system.isCrankDocked" => Some(Ret::I(dev.borrow().input.crank_docked as u32)),
@@ -439,15 +448,15 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
         "system.addMenuItem" | "system.addCheckmarkMenuItem" | "system.addOptionsMenuItem" => {
             Some(Ret::I(MENU_BASE + 16))
         }
-        "system.getMenuItemTitle" => Some(Ret::I(put_str(uc, ""))),
+        "system.getMenuItemTitle" => Some(Ret::I(put_str(cpu, st, ""))),
         "system.getElapsedTime" => {
-            uc.get_data_mut().sync();
-            charge(uc, Category::Other, "system.getElapsedTime", Work::default());
+            st.sync();
+            charge(st, Category::Other, "system.getElapsedTime", Work::default());
             let t = dev.borrow_mut().elapsed_s_sample();
             Some(Ret::F(t as f32))
         }
         "system.resetElapsedTime" => {
-            uc.get_data_mut().sync();
+            st.sync();
             dev.borrow_mut().reset_elapsed();
             none
         }
@@ -472,11 +481,11 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
                 (rem % 3600 / 60) as u8,
                 (rem % 60) as u8,
             ];
-            uc.write(p, &b);
+            cpu.write(p, &b);
             none
         }
         "system.convertDateTimeToEpoch" => {
-            let b = uc.bytes(ru(a, 0), 8);
+            let b = cpu.bytes(ru(a, 0), 8);
             if b.len() < 8 {
                 return Some(Ret::I(0));
             }
@@ -486,21 +495,21 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
             Some(Ret::I(secs as u32))
         }
         "system.setButtonCallback" => {
-            uc.get_data_mut().button_cb = Some((ru(a, 0), ru(a, 1)));
+            st.button_cb = Some((ru(a, 0), ru(a, 1)));
             none
         }
         "system.delay" => {
-            uc.get_data_mut().sync();
+            st.sync();
             let mut d = dev.borrow_mut();
             let c = ru(a, 0) as f64 * d.cal.cpu_hz as f64 / 1000.0;
             d.charge(Category::Other, c);
             none
         }
         "system.getSystemInfo" => {
-            let p = uc.get_data_mut().scratch(12);
-            uc.w32(p, 30102);
-            uc.w32(p + 4, 0);
-            uc.w32(p + 8, 30102);
+            let p = st.scratch(12);
+            cpu.w32(p, 30102);
+            cpu.w32(p + 4, 0);
+            cpu.w32(p + 8, 30102);
             Some(Ret::I(p))
         }
 
@@ -538,8 +547,8 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
 
         // ------------------------------------------------------------ graphics state
         "graphics.clear" => {
-            let c = color(uc, ru(a, 0));
-            gfx(uc, "graphics.clear", |_, g| g.clear(c));
+            let c = color(cpu, ru(a, 0));
+            gfx(cpu, st, "graphics.clear", |_, g| g.clear(c));
             none
         }
         "graphics.setBackgroundColor" => {
@@ -568,7 +577,7 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
             dev.borrow_mut()
                 .gfx
                 .set_clip_rect(Rect::new(ri(a, 0), ri(a, 1), ri(a, 2), ri(a, 3)));
-            charge(uc, Category::Gfx, "graphics.setClipRect", Work::default());
+            charge(st, Category::Gfx, "graphics.setClipRect", Work::default());
             none
         }
         "graphics.setScreenClipRect" => {
@@ -612,28 +621,28 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
             none
         }
         "graphics.pushContext" => {
-            ArmGame::before_gfx(uc);
+            ArmGame::before_gfx(cpu, st);
             dev.borrow_mut().gfx.push_context(bid(ru(a, 0)));
-            charge(uc, Category::Gfx, "graphics.pushContext", Work::default());
+            charge(st, Category::Gfx, "graphics.pushContext", Work::default());
             none
         }
         "graphics.popContext" => {
             dev.borrow_mut().gfx.pop_context();
-            charge(uc, Category::Gfx, "graphics.popContext", Work::default());
+            charge(st, Category::Gfx, "graphics.popContext", Work::default());
             none
         }
 
         // ------------------------------------------------------------ drawing
         "graphics.fillRect" => {
-            let c = color(uc, ru(a, 4));
-            gfx(uc, "graphics.fillRect", |_, g| {
+            let c = color(cpu, ru(a, 4));
+            gfx(cpu, st, "graphics.fillRect", |_, g| {
                 g.fill_rect(Rect::new(ri(a, 0), ri(a, 1), ri(a, 2), ri(a, 3)), c)
             });
             none
         }
         "graphics.drawRect" => {
-            let c = color(uc, ru(a, 4));
-            gfx(uc, "graphics.drawRect", |_, g| {
+            let c = color(cpu, ru(a, 4));
+            gfx(cpu, st, "graphics.drawRect", |_, g| {
                 let saved = (g.state.line_width, g.state.stroke);
                 g.state.line_width = 1;
                 g.state.stroke = StrokeLocation::Inside;
@@ -644,8 +653,8 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
             none
         }
         "graphics.drawLine" => {
-            let c = color(uc, ru(a, 5));
-            gfx(uc, "graphics.drawLine", |_, g| {
+            let c = color(cpu, ru(a, 5));
+            gfx(cpu, st, "graphics.drawLine", |_, g| {
                 let saved = g.state.line_width;
                 g.state.line_width = ri(a, 4).max(1);
                 let w = g.draw_line(ri(a, 0), ri(a, 1), ri(a, 2), ri(a, 3), c);
@@ -655,15 +664,15 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
             none
         }
         "graphics.setPixel" => {
-            let c = color(uc, ru(a, 2));
-            gfx(uc, "graphics.drawPixel", |_, g| {
+            let c = color(cpu, ru(a, 2));
+            gfx(cpu, st, "graphics.drawPixel", |_, g| {
                 g.draw_pixel(ri(a, 0), ri(a, 1), c)
             });
             none
         }
         "graphics.fillTriangle" => {
-            let c = color(uc, ru(a, 6));
-            gfx(uc, "graphics.fillTriangle", |_, g| {
+            let c = color(cpu, ru(a, 6));
+            gfx(cpu, st, "graphics.fillTriangle", |_, g| {
                 g.fill_triangle(
                     [(ri(a, 0), ri(a, 1)), (ri(a, 2), ri(a, 3)), (ri(a, 4), ri(a, 5))],
                     c,
@@ -672,8 +681,8 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
             none
         }
         "graphics.drawEllipse" => {
-            let c = color(uc, ru(a, 7));
-            gfx(uc, "graphics.drawEllipse", |_, g| {
+            let c = color(cpu, ru(a, 7));
+            gfx(cpu, st, "graphics.drawEllipse", |_, g| {
                 g.draw_ellipse(
                     Rect::new(ri(a, 0), ri(a, 1), ri(a, 2), ri(a, 3)),
                     ri(a, 4),
@@ -685,8 +694,8 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
             none
         }
         "graphics.fillEllipse" => {
-            let c = color(uc, ru(a, 6));
-            gfx(uc, "graphics.fillEllipse", |_, g| {
+            let c = color(cpu, ru(a, 6));
+            gfx(cpu, st, "graphics.fillEllipse", |_, g| {
                 g.fill_ellipse(
                     Rect::new(ri(a, 0), ri(a, 1), ri(a, 2), ri(a, 3)),
                     rf(a, 4),
@@ -697,8 +706,8 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
             none
         }
         "graphics.drawRoundRect" => {
-            let c = color(uc, ru(a, 6));
-            gfx(uc, "graphics.drawRoundRect", |_, g| {
+            let c = color(cpu, ru(a, 6));
+            gfx(cpu, st, "graphics.drawRoundRect", |_, g| {
                 g.draw_round_rect(
                     Rect::new(ri(a, 0), ri(a, 1), ri(a, 2), ri(a, 3)),
                     ri(a, 4),
@@ -709,15 +718,17 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
             none
         }
         "graphics.fillRoundRect" => {
-            let c = color(uc, ru(a, 5));
-            gfx(uc, "graphics.fillRoundRect", |_, g| {
+            let c = color(cpu, ru(a, 5));
+            gfx(cpu, st, "graphics.fillRoundRect", |_, g| {
                 g.fill_round_rect(Rect::new(ri(a, 0), ri(a, 1), ri(a, 2), ri(a, 3)), ri(a, 4), c)
             });
             none
         }
         "graphics.fillPolygon" => {
             let n = ru(a, 0).min(4096);
-            let b = uc.bytes(ru(a, 1), n as usize * 8);
+            let b = cpu.bytes(ru(a, 1), n as usize * 8);
+            // as_chunks needs Rust 1.88; the crate supports 1.80.
+            #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
             let pts: Vec<(i32, i32)> = b
                 .chunks_exact(8)
                 .map(|c| {
@@ -727,18 +738,20 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
                     )
                 })
                 .collect();
-            let c = color(uc, ru(a, 2));
+            let c = color(cpu, ru(a, 2));
             let rule = if ru(a, 3) == 0 {
                 FillRule::NonZero
             } else {
                 FillRule::EvenOdd
             };
-            gfx(uc, "graphics.fillPolygon", |_, g| g.fill_polygon(&pts, rule, c));
+            gfx(cpu, st, "graphics.fillPolygon", |_, g| {
+                g.fill_polygon(&pts, rule, c)
+            });
             none
         }
         "graphics.drawBitmap" => {
             if let Some(id) = bid(ru(a, 0)) {
-                gfx(uc, "graphics.drawBitmap", |_, g| {
+                gfx(cpu, st, "graphics.drawBitmap", |_, g| {
                     g.draw_bitmap(id, ri(a, 1), ri(a, 2), Flip::from_index(ru(a, 3) as i64))
                 });
             }
@@ -746,7 +759,7 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
         }
         "graphics.tileBitmap" => {
             if let Some(id) = bid(ru(a, 0)) {
-                gfx(uc, "graphics.tileBitmap", |_, g| {
+                gfx(cpu, st, "graphics.tileBitmap", |_, g| {
                     g.tile_bitmap(
                         id,
                         Rect::new(ri(a, 1), ri(a, 2), ri(a, 3), ri(a, 4)),
@@ -758,7 +771,7 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
         }
         "graphics.drawScaledBitmap" => {
             if let Some(id) = bid(ru(a, 0)) {
-                gfx(uc, "graphics.drawScaledBitmap", |_, g| {
+                gfx(cpu, st, "graphics.drawScaledBitmap", |_, g| {
                     g.draw_scaled_bitmap(id, ri(a, 1), ri(a, 2), rf(a, 3), rf(a, 4))
                 });
             }
@@ -766,7 +779,7 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
         }
         "graphics.drawRotatedBitmap" => {
             if let Some(id) = bid(ru(a, 0)) {
-                gfx(uc, "graphics.drawRotatedBitmap", |_, g| {
+                gfx(cpu, st, "graphics.drawRotatedBitmap", |_, g| {
                     g.draw_rotated_bitmap(
                         id,
                         ri(a, 1),
@@ -782,9 +795,9 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
             none
         }
         "graphics.drawText" => {
-            let s = text(uc, ru(a, 0), ru(a, 1), ru(a, 2));
+            let s = text(cpu, ru(a, 0), ru(a, 1), ru(a, 2));
             let mut width = 0;
-            gfx(uc, "graphics.drawText", |_, g| {
+            gfx(cpu, st, "graphics.drawText", |_, g| {
                 let f = g.current_font();
                 let (w, _, work) = g.draw_text(f, &s, ri(a, 3), ri(a, 4));
                 width = w;
@@ -793,7 +806,7 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
             Some(Ret::I(width as u32))
         }
         "graphics.drawTextInRect" => {
-            let s = text(uc, ru(a, 0), ru(a, 1), ru(a, 2));
+            let s = text(cpu, ru(a, 0), ru(a, 1), ru(a, 2));
             let wrap = match ru(a, 7) {
                 0 => WrapMode::Clip,
                 1 => WrapMode::Character,
@@ -804,7 +817,7 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
                 2 => TextAlign::Center,
                 _ => TextAlign::Left,
             };
-            gfx(uc, "graphics.drawText", |_, g| {
+            gfx(cpu, st, "graphics.drawText", |_, g| {
                 let f = g.current_font();
                 g.draw_text_in_rect(
                     f,
@@ -818,7 +831,7 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
             none
         }
         "graphics.getTextWidth" => {
-            let s = text(uc, ru(a, 1), ru(a, 2), ru(a, 3));
+            let s = text(cpu, ru(a, 1), ru(a, 2), ru(a, 3));
             let d = dev.borrow();
             let f = fid(ru(a, 0)).unwrap_or_else(|| d.gfx.current_font());
             Some(Ret::I(
@@ -826,7 +839,7 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
             ))
         }
         "graphics.getTextHeightForMaxWidth" => {
-            let s = text(uc, ru(a, 1), ru(a, 2), ru(a, 4));
+            let s = text(cpu, ru(a, 1), ru(a, 2), ru(a, 4));
             let d = dev.borrow();
             let f = fid(ru(a, 0)).unwrap_or_else(|| d.gfx.current_font());
             let lines = d.gfx.wrap_text(f, &s, ri(a, 3), WrapMode::Word);
@@ -839,17 +852,17 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
             Some(Ret::I(d.gfx.font(f).map_or(0, |f| f.height()) as u32))
         }
         "graphics.loadFont" => {
-            let path = uc.cstr(ru(a, 0));
-            let found = resolve_font(uc, &path);
+            let path = cpu.cstr(ru(a, 0));
+            let found = resolve_font(st, &path);
             let r = found.map(|p| dev.borrow_mut().gfx.load_font(&p));
             match r {
                 Some(Ok(id)) => {
-                    charge(uc, Category::Io, "graphics.loadFont", Work::default());
+                    charge(st, Category::Io, "graphics.loadFont", Work::default());
                     Some(Ret::I(fh(id)))
                 }
                 _ => {
-                    let e = put_str(uc, &format!("font not found: {path}"));
-                    uc.w32(ru(a, 1), e);
+                    let e = put_str(cpu, st, &format!("font not found: {path}"));
+                    cpu.w32(ru(a, 1), e);
                     Some(Ret::I(0))
                 }
             }
@@ -857,9 +870,9 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
 
         // ------------------------------------------------------------ bitmaps
         "graphics.newBitmap" => {
-            let c = color(uc, ru(a, 2));
+            let c = color(cpu, ru(a, 2));
             let id = dev.borrow_mut().gfx.new_bitmap(ri(a, 0), ri(a, 1), c);
-            charge(uc, Category::Gfx, "graphics.newBitmap", Work::default());
+            charge(st, Category::Gfx, "graphics.newBitmap", Work::default());
             Some(Ret::I(bh(id)))
         }
         "graphics.freeBitmap" => {
@@ -869,14 +882,14 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
             none
         }
         "graphics.loadBitmap" | "graphics.loadIntoBitmap" => {
-            let path = uc.cstr(ru(a, 0));
+            let path = cpu.cstr(ru(a, 0));
             let p = path.trim_end_matches(".pdi").to_string();
             let found = dev.borrow().fs.resolve_with_ext(&p, &["png"]);
             let loaded = found.as_ref().map(Bitmap::load_png);
             match loaded {
                 Some(Ok(b)) => {
                     charge(
-                        uc,
+                        st,
                         Category::Io,
                         "graphics.loadBitmap",
                         Work {
@@ -900,26 +913,26 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
                         Some(Err(e)) => e.to_string(),
                         _ => format!("file not found: {path}"),
                     };
-                    let e = put_str(uc, &msg);
+                    let e = put_str(cpu, st, &msg);
                     let err_ptr = if name == "graphics.loadBitmap" {
                         ru(a, 1)
                     } else {
                         ru(a, 2)
                     };
-                    uc.w32(err_ptr, e);
+                    cpu.w32(err_ptr, e);
                     Some(Ret::I(0))
                 }
             }
         }
         "graphics.copyBitmap" => {
             let id = bid(ru(a, 0)).and_then(|id| dev.borrow_mut().gfx.copy_bitmap(id));
-            charge(uc, Category::Gfx, "graphics.copyBitmap", Work::default());
+            charge(st, Category::Gfx, "graphics.copyBitmap", Work::default());
             Some(Ret::I(id.map_or(0, bh)))
         }
         "graphics.clearBitmap" => {
-            let c = color(uc, ru(a, 1));
+            let c = color(cpu, ru(a, 1));
             if let Some(id) = bid(ru(a, 0)) {
-                gfx(uc, "graphics.clear", |_, g| {
+                gfx(cpu, st, "graphics.clear", |_, g| {
                     g.push_context(Some(id));
                     let w = g.clear(c);
                     g.pop_context();
@@ -933,22 +946,22 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
                 return Some(Ret::None);
             };
             let b = dev.borrow().gfx.bitmap(id).cloned().unwrap_or_default();
-            uc.w32(ru(a, 1), b.width as u32);
-            uc.w32(ru(a, 2), b.height as u32);
-            uc.w32(ru(a, 3), b.rowbytes as u32);
+            cpu.w32(ru(a, 1), b.width as u32);
+            cpu.w32(ru(a, 2), b.height as u32);
+            cpu.w32(ru(a, 3), b.rowbytes as u32);
             // A read-only snapshot of the pixels.
-            let data = heap_alloc(uc, b.data.len() as u32);
-            uc.write(data, &b.data);
-            uc.w32(ru(a, 5), data);
+            let data = heap_alloc(cpu, st, b.data.len() as u32);
+            cpu.write(data, &b.data);
+            cpu.w32(ru(a, 5), data);
             let mask = match &b.mask {
                 Some(m) => {
-                    let p = heap_alloc(uc, m.len() as u32);
-                    uc.write(p, m);
+                    let p = heap_alloc(cpu, st, m.len() as u32);
+                    cpu.write(p, m);
                     p
                 }
                 None => 0,
             };
-            uc.w32(ru(a, 4), mask);
+            cpu.w32(ru(a, 4), mask);
             none
         }
         "graphics.rotatedBitmap" => {
@@ -960,8 +973,8 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
             let size = id
                 .and_then(|i| dev.borrow().gfx.bitmap(i).map(|b| b.memory_bytes()))
                 .unwrap_or(0);
-            uc.w32(ru(a, 4), size as u32);
-            charge(uc, Category::Gfx, "graphics.drawRotatedBitmap", Work::default());
+            cpu.w32(ru(a, 4), size as u32);
+            charge(st, Category::Gfx, "graphics.drawRotatedBitmap", Work::default());
             Some(Ret::I(id.map_or(0, bh)))
         }
         "graphics.setBitmapMask" => {
@@ -1054,24 +1067,24 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
                     }
                 }
             }
-            let p = heap_alloc(uc, 16);
-            uc.write(p, &pat);
-            uc.w32(ru(a, 0), p);
+            let p = heap_alloc(cpu, st, 16);
+            cpu.write(p, &pat);
+            cpu.w32(ru(a, 0), p);
             none
         }
         "graphics.getFrame" => {
-            uc.get_data_mut().frame_mirror = true;
+            st.frame_mirror = true;
             let data = dev.borrow().gfx.frame().data.clone();
-            uc.write(FRAME_ADDR, &data);
+            cpu.write(FRAME_ADDR, &data);
             Some(Ret::I(FRAME_ADDR))
         }
         "graphics.getDisplayFrame" => {
             let data = dev.borrow().gfx.display().data.clone();
-            uc.write(DISPLAY_ADDR, &data);
+            cpu.write(DISPLAY_ADDR, &data);
             Some(Ret::I(DISPLAY_ADDR))
         }
         "graphics.copyFrameBufferBitmap" | "graphics.getDisplayBufferBitmap" => {
-            ArmGame::before_gfx(uc);
+            ArmGame::before_gfx(cpu, st);
             let mut d = dev.borrow_mut();
             let b = if name == "graphics.copyFrameBufferBitmap" {
                 d.gfx.frame().clone()
@@ -1081,10 +1094,10 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
             Some(Ret::I(bh(d.gfx.add_bitmap(b))))
         }
         "graphics.markUpdatedRows" => {
-            ArmGame::before_gfx(uc);
+            ArmGame::before_gfx(cpu, st);
             dev.borrow_mut().gfx.mark_updated_rows(ri(a, 0), ri(a, 1));
             charge(
-                uc,
+                st,
                 Category::Gfx,
                 "graphics.markUpdatedRows",
                 Work {
@@ -1109,14 +1122,13 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
             let ids: Vec<u32> = (0..n)
                 .map(|_| dev.borrow_mut().gfx.new_bitmap(w, h, Color::Clear))
                 .collect();
-            let st = uc.get_data_mut();
             let t = st.next_table;
             st.next_table += 1;
             st.tables.insert(t, ids);
             Some(Ret::I(TABLE_BASE + t * 16))
         }
         "graphics.loadBitmapTable" | "graphics.loadIntoBitmapTable" => {
-            let path = uc.cstr(ru(a, 0));
+            let path = cpu.cstr(ru(a, 0));
             let base = {
                 let d = dev.borrow();
                 let clean =
@@ -1129,13 +1141,12 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
                         .into_iter()
                         .map(|b| dev.borrow_mut().gfx.add_bitmap(b))
                         .collect();
-                    charge(uc, Category::Io, "graphics.loadBitmap", Work::default());
+                    charge(st, Category::Io, "graphics.loadBitmap", Work::default());
                     if name == "graphics.loadIntoBitmapTable" {
                         let t = (ru(a, 1).wrapping_sub(TABLE_BASE)) / 16;
-                        uc.get_data_mut().tables.insert(t, ids);
+                        st.tables.insert(t, ids);
                         none
                     } else {
-                        let st = uc.get_data_mut();
                         let t = st.next_table;
                         st.next_table += 1;
                         st.tables.insert(t, ids);
@@ -1143,36 +1154,32 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
                     }
                 }
                 Err(e) => {
-                    let p = put_str(uc, &e.to_string());
+                    let p = put_str(cpu, st, &e.to_string());
                     let err_ptr = if name == "graphics.loadBitmapTable" {
                         ru(a, 1)
                     } else {
                         ru(a, 2)
                     };
-                    uc.w32(err_ptr, p);
+                    cpu.w32(err_ptr, p);
                     Some(Ret::I(0))
                 }
             }
         }
         "graphics.getTableBitmap" => {
             let t = (ru(a, 0).wrapping_sub(TABLE_BASE)) / 16;
-            let id = uc
-                .get_data()
-                .tables
-                .get(&t)
-                .and_then(|v| v.get(ru(a, 1) as usize).copied());
+            let id = st.tables.get(&t).and_then(|v| v.get(ru(a, 1) as usize).copied());
             Some(Ret::I(id.map_or(0, bh)))
         }
         "graphics.getBitmapTableInfo" => {
             let t = (ru(a, 0).wrapping_sub(TABLE_BASE)) / 16;
-            let n = uc.get_data().tables.get(&t).map_or(0, |v| v.len());
-            uc.w32(ru(a, 1), n as u32);
-            uc.w32(ru(a, 2), n as u32);
+            let n = st.tables.get(&t).map_or(0, |v| v.len());
+            cpu.w32(ru(a, 1), n as u32);
+            cpu.w32(ru(a, 2), n as u32);
             none
         }
         "graphics.freeBitmapTable" => {
             let t = (ru(a, 0).wrapping_sub(TABLE_BASE)) / 16;
-            if let Some(ids) = uc.get_data_mut().tables.remove(&t) {
+            if let Some(ids) = st.tables.remove(&t) {
                 for id in ids {
                     dev.borrow_mut().gfx.free_bitmap(id);
                 }
@@ -1181,10 +1188,10 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
         }
 
         // ------------------------------------------------------------ sprites
-        n if n.starts_with("sprite.") => return sprite(uc, &n[7..], a),
+        n if n.starts_with("sprite.") => return sprite(cpu, st, &n[7..], a),
 
         // ------------------------------------------------------------ files
-        n if n.starts_with("file.") => return file(uc, &n[5..], a),
+        n if n.starts_with("file.") => return file(cpu, st, &n[5..], a),
 
         _ => return None,
     };
@@ -1196,8 +1203,8 @@ fn pdsim_device_epoch() -> f64 {
     1_767_225_600.0
 }
 
-fn sprite_rect(uc: &Uc, id: u32) -> [f32; 4] {
-    let d = uc.get_data().dev.borrow();
+fn sprite_rect(st: &ArmState, id: u32) -> [f32; 4] {
+    let d = st.dev.borrow();
     d.sprites.get(id).map_or([0.0; 4], |s| {
         let b = s.bounds();
         [b.x, b.y, b.w, b.h]
@@ -1205,12 +1212,17 @@ fn sprite_rect(uc: &Uc, id: u32) -> [f32; 4] {
 }
 
 /// Writes `SpriteCollisionInfo` structs (76 bytes each) to the heap.
-fn put_collisions(uc: &mut Uc, cols: &[pdsim_gfx::sprite::Collision], len_ptr: u32) -> u32 {
-    uc.w32(len_ptr, cols.len() as u32);
+fn put_collisions(
+    cpu: &mut dyn Cpu<ArmState>,
+    st: &mut ArmState,
+    cols: &[pdsim_gfx::sprite::Collision],
+    len_ptr: u32,
+) -> u32 {
+    cpu.w32(len_ptr, cols.len() as u32);
     if cols.is_empty() {
         return 0;
     }
-    let base = heap_alloc(uc, cols.len() as u32 * 76);
+    let base = heap_alloc(cpu, st, cols.len() as u32 * 76);
     for (i, c) in cols.iter().enumerate() {
         let p = base + i as u32 * 76;
         let mut b = Vec::with_capacity(76);
@@ -1231,13 +1243,13 @@ fn put_collisions(uc: &mut Uc, cols: &[pdsim_gfx::sprite::Collision], len_ptr: u
             b.extend(r.w.to_le_bytes());
             b.extend(r.h.to_le_bytes());
         }
-        uc.write(p, &b);
+        cpu.write(p, &b);
     }
     base
 }
 
-fn sprite(uc: &mut Uc, f: &str, a: &[Arg]) -> Option<Ret> {
-    let dev = uc.get_data().dev.clone();
+fn sprite(cpu: &mut dyn Cpu<ArmState>, st: &mut ArmState, f: &str, a: &[Arg]) -> Option<Ret> {
+    let dev = st.dev.clone();
     let none = Some(Ret::None);
     let s = sid(ru(a, 0));
     let modify = |g: &dyn Fn(&mut pdsim_gfx::sprite::Sprite)| {
@@ -1253,7 +1265,7 @@ fn sprite(uc: &mut Uc, f: &str, a: &[Arg]) -> Option<Ret> {
         "freeSprite" => {
             if let Some(id) = s {
                 dev.borrow_mut().sprites.destroy(id);
-                uc.get_data_mut().sprite_fns.remove(&id);
+                st.sprite_fns.remove(&id);
             }
             none
         }
@@ -1267,9 +1279,9 @@ fn sprite(uc: &mut Uc, f: &str, a: &[Arg]) -> Option<Ret> {
                 d.sprites.modify(n, |t| *t = sp);
             }
             drop(d);
-            let fns = uc.get_data().sprite_fns.get(&id).copied();
+            let fns = st.sprite_fns.get(&id).copied();
             if let Some(fns) = fns {
-                uc.get_data_mut().sprite_fns.insert(n, fns);
+                st.sprite_fns.insert(n, fns);
             }
             Some(Ret::I(sh(n)))
         }
@@ -1277,20 +1289,20 @@ fn sprite(uc: &mut Uc, f: &str, a: &[Arg]) -> Option<Ret> {
             if let Some(id) = s {
                 dev.borrow_mut().sprites.add(id);
             }
-            charge(uc, Category::Gfx, "sprite.add", Work::default());
+            charge(st, Category::Gfx, "sprite.add", Work::default());
             none
         }
         "removeSprite" => {
             if let Some(id) = s {
                 dev.borrow_mut().sprites.remove(id);
             }
-            charge(uc, Category::Gfx, "sprite.remove", Work::default());
+            charge(st, Category::Gfx, "sprite.remove", Work::default());
             none
         }
         "removeSprites" => {
             let n = ru(a, 1).min(65536);
             for i in 0..n {
-                let h = uc.r32(ru(a, 0) + i * 4);
+                let h = cpu.r32(ru(a, 0) + i * 4);
                 if let Some(id) = sid(h) {
                     dev.borrow_mut().sprites.remove(id);
                 }
@@ -1312,7 +1324,7 @@ fn sprite(uc: &mut Uc, f: &str, a: &[Arg]) -> Option<Ret> {
                     .sprites
                     .add_dirty_rect(Rect::new(*l, *t, r - l, b - t));
             }
-            charge(uc, Category::Gfx, "sprite.addDirtyRect", Work::default());
+            charge(st, Category::Gfx, "sprite.addDirtyRect", Work::default());
             none
         }
         "setBounds" => {
@@ -1325,14 +1337,14 @@ fn sprite(uc: &mut Uc, f: &str, a: &[Arg]) -> Option<Ret> {
             });
             none
         }
-        "getBounds" => Some(Ret::Rect(s.map_or([0.0; 4], |id| sprite_rect(uc, id)))),
+        "getBounds" => Some(Ret::Rect(s.map_or([0.0; 4], |id| sprite_rect(st, id)))),
         "moveTo" => {
             let (x, y) = (rf(a, 1), rf(a, 2));
             modify(&|sp| {
                 sp.x = x;
                 sp.y = y;
             });
-            charge(uc, Category::Gfx, "sprite.moveTo", Work::default());
+            charge(st, Category::Gfx, "sprite.moveTo", Work::default());
             none
         }
         "moveBy" => {
@@ -1341,15 +1353,15 @@ fn sprite(uc: &mut Uc, f: &str, a: &[Arg]) -> Option<Ret> {
                 sp.x += x;
                 sp.y += y;
             });
-            charge(uc, Category::Gfx, "sprite.moveTo", Work::default());
+            charge(st, Category::Gfx, "sprite.moveTo", Work::default());
             none
         }
         "getPosition" => {
             let (x, y) = s
                 .and_then(|id| dev.borrow().sprites.get(id).map(|sp| (sp.x, sp.y)))
                 .unwrap_or((0.0, 0.0));
-            uc.wf32(ru(a, 1), x);
-            uc.wf32(ru(a, 2), y);
+            cpu.wf32(ru(a, 1), x);
+            cpu.wf32(ru(a, 2), y);
             none
         }
         "setImage" => {
@@ -1369,7 +1381,7 @@ fn sprite(uc: &mut Uc, f: &str, a: &[Arg]) -> Option<Ret> {
                     sp.height = h;
                 }
             });
-            charge(uc, Category::Gfx, "sprite.setImage", Work::default());
+            charge(st, Category::Gfx, "sprite.setImage", Work::default());
             none
         }
         "getImage" => Some(Ret::I(get(&|sp| sp.image.map_or(0, bh)))),
@@ -1390,8 +1402,8 @@ fn sprite(uc: &mut Uc, f: &str, a: &[Arg]) -> Option<Ret> {
             let c = s
                 .and_then(|id| dev.borrow().sprites.get(id).map(|sp| sp.center))
                 .unwrap_or((0.5, 0.5));
-            uc.wf32(ru(a, 1), c.0);
-            uc.wf32(ru(a, 2), c.1);
+            cpu.wf32(ru(a, 1), c.0);
+            cpu.wf32(ru(a, 2), c.1);
             none
         }
         "setZIndex" => {
@@ -1472,7 +1484,7 @@ fn sprite(uc: &mut Uc, f: &str, a: &[Arg]) -> Option<Ret> {
         "setUpdateFunction" | "setDrawFunction" | "setCollisionResponseFunction" | "setUserdata" => {
             if let Some(id) = s {
                 let v = ru(a, 1);
-                let e = uc.get_data_mut().sprite_fns.entry(id).or_default();
+                let e = st.sprite_fns.entry(id).or_default();
                 match f {
                     "setUpdateFunction" => e.update = v,
                     "setDrawFunction" => e.draw = v,
@@ -1483,7 +1495,7 @@ fn sprite(uc: &mut Uc, f: &str, a: &[Arg]) -> Option<Ret> {
             none
         }
         "getUserdata" => Some(Ret::I(
-            s.and_then(|id| uc.get_data().sprite_fns.get(&id).map(|f| f.userdata))
+            s.and_then(|id| st.sprite_fns.get(&id).map(|f| f.userdata))
                 .unwrap_or(0),
         )),
         "setCollideRect" => {
@@ -1504,14 +1516,14 @@ fn sprite(uc: &mut Uc, f: &str, a: &[Arg]) -> Option<Ret> {
             let (gx, gy) = (rf(a, 1), rf(a, 2));
             // Ask the game for each candidate's response first.
             let candidates = dev.borrow().sprites.move_candidates(id, gx, gy);
-            let resp_fn = uc.get_data().sprite_fns.get(&id).map_or(0, |f| f.collision);
+            let resp_fn = st.sprite_fns.get(&id).map_or(0, |f| f.collision);
             let mut responses = std::collections::HashMap::new();
             for o in candidates {
                 let r = if resp_fn != 0 {
-                    match call(uc, resp_fn, &[sh(id), sh(o)]) {
+                    match call(cpu, st, resp_fn, &[sh(id), sh(o)]) {
                         Ok(v) => v,
                         Err(e) => {
-                            uc.get_data_mut().error = Some(e);
+                            st.error = Some(e);
                             0
                         }
                     }
@@ -1528,7 +1540,7 @@ fn sprite(uc: &mut Uc, f: &str, a: &[Arg]) -> Option<Ret> {
             };
             let n = dev.borrow().sprites.count() as u64;
             charge(
-                uc,
+                st,
                 Category::Gfx,
                 "sprite.moveWithCollisions",
                 Work {
@@ -1536,9 +1548,9 @@ fn sprite(uc: &mut Uc, f: &str, a: &[Arg]) -> Option<Ret> {
                     ..Default::default()
                 },
             );
-            uc.wf32(ru(a, 3), ax);
-            uc.wf32(ru(a, 4), ay);
-            Some(Ret::I(put_collisions(uc, &cols, ru(a, 5))))
+            cpu.wf32(ru(a, 3), ax);
+            cpu.wf32(ru(a, 4), ay);
+            Some(Ret::I(put_collisions(cpu, st, &cols, ru(a, 5))))
         }
         "querySpritesAtPoint" => {
             let v: Vec<u32> = dev
@@ -1548,12 +1560,12 @@ fn sprite(uc: &mut Uc, f: &str, a: &[Arg]) -> Option<Ret> {
                 .into_iter()
                 .map(sh)
                 .collect();
-            Some(Ret::I(put_array(uc, &v, ru(a, 2))))
+            Some(Ret::I(put_array(cpu, st, &v, ru(a, 2))))
         }
         "querySpritesInRect" => {
             let r = RectF::new(rf(a, 0), rf(a, 1), rf(a, 2), rf(a, 3));
             let v: Vec<u32> = dev.borrow().sprites.query_rect(r).into_iter().map(sh).collect();
-            Some(Ret::I(put_array(uc, &v, ru(a, 4))))
+            Some(Ret::I(put_array(cpu, st, &v, ru(a, 4))))
         }
         "querySpritesAlongLine" => {
             let v: Vec<u32> = dev
@@ -1563,10 +1575,10 @@ fn sprite(uc: &mut Uc, f: &str, a: &[Arg]) -> Option<Ret> {
                 .into_iter()
                 .map(sh)
                 .collect();
-            Some(Ret::I(put_array(uc, &v, ru(a, 4))))
+            Some(Ret::I(put_array(cpu, st, &v, ru(a, 4))))
         }
         "querySpriteInfoAlongLine" => {
-            uc.w32(ru(a, 4), 0);
+            cpu.w32(ru(a, 4), 0);
             Some(Ret::I(0))
         }
         "overlappingSprites" => {
@@ -1576,7 +1588,7 @@ fn sprite(uc: &mut Uc, f: &str, a: &[Arg]) -> Option<Ret> {
                 .into_iter()
                 .map(sh)
                 .collect();
-            Some(Ret::I(put_array(uc, &v, ru(a, 1))))
+            Some(Ret::I(put_array(cpu, st, &v, ru(a, 1))))
         }
         "allOverlappingSprites" => {
             let v: Vec<u32> = dev
@@ -1586,29 +1598,29 @@ fn sprite(uc: &mut Uc, f: &str, a: &[Arg]) -> Option<Ret> {
                 .into_iter()
                 .flat_map(|(x, y)| [sh(x), sh(y)])
                 .collect();
-            uc.w32(ru(a, 0), (v.len() / 2) as u32);
+            cpu.w32(ru(a, 0), (v.len() / 2) as u32);
             if v.is_empty() {
                 return Some(Ret::I(0));
             }
-            let p = heap_alloc(uc, v.len() as u32 * 4);
+            let p = heap_alloc(cpu, st, v.len() as u32 * 4);
             let b: Vec<u8> = v.iter().flat_map(|x| x.to_le_bytes()).collect();
-            uc.write(p, &b);
+            cpu.write(p, &b);
             Some(Ret::I(p))
         }
         "updateAndDrawSprites" | "drawSprites" => {
             if f == "updateAndDrawSprites" {
                 let ids = dev.borrow().sprites.update_list();
                 for id in ids {
-                    let upd = uc.get_data().sprite_fns.get(&id).map_or(0, |f| f.update);
+                    let upd = st.sprite_fns.get(&id).map_or(0, |f| f.update);
                     if upd != 0 {
-                        if let Err(e) = call(uc, upd, &[sh(id)]) {
-                            uc.get_data_mut().error = Some(e);
+                        if let Err(e) = call(cpu, st, upd, &[sh(id)]) {
+                            st.error = Some(e);
                             return Some(Ret::None);
                         }
                     }
                 }
             }
-            draw_sprites(uc);
+            draw_sprites(cpu, st);
             none
         }
         _ => return None,
@@ -1616,13 +1628,13 @@ fn sprite(uc: &mut Uc, f: &str, a: &[Arg]) -> Option<Ret> {
     r
 }
 
-fn draw_sprites(uc: &mut Uc) {
-    ArmGame::before_gfx(uc);
-    let dev = uc.get_data().dev.clone();
+fn draw_sprites(cpu: &mut dyn Cpu<ArmState>, st: &mut ArmState) {
+    ArmGame::before_gfx(cpu, st);
+    let dev = st.dev.clone();
     // Which sprites draw themselves.
     let list = dev.borrow().sprites.display_list();
     for id in &list {
-        let has = uc.get_data().sprite_fns.get(id).is_some_and(|f| f.draw != 0);
+        let has = st.sprite_fns.get(id).is_some_and(|f| f.draw != 0);
         dev.borrow_mut()
             .sprites
             .modify(*id, |s| s.has_draw_callback = has);
@@ -1672,8 +1684,8 @@ fn draw_sprites(uc: &mut Uc) {
                     local,
                     clip,
                 } => {
-                    let draw = uc.get_data().sprite_fns.get(sprite).map_or(0, |f| f.draw);
-                    let b = sprite_rect(uc, *sprite);
+                    let draw = st.sprite_fns.get(sprite).map_or(0, |f| f.draw);
+                    let b = sprite_rect(st, *sprite);
                     {
                         let mut d = dev.borrow_mut();
                         let font = d.gfx.state.font;
@@ -1691,39 +1703,40 @@ fn draw_sprites(uc: &mut Uc) {
                         local.w as f32,
                         local.h as f32,
                     ];
-                    ArmGame::after_gfx(uc);
+                    ArmGame::after_gfx(cpu, st);
                     if let Err(e) = call_full(
-                        uc,
+                        cpu,
+                        st,
                         draw,
                         &[sh(*sprite)],
                         &[b[0], b[1], b[2], b[3], dr[0], dr[1], dr[2], dr[3]],
                     ) {
-                        uc.get_data_mut().error = Some(e);
+                        st.error = Some(e);
                     }
-                    ArmGame::before_gfx(uc);
+                    ArmGame::before_gfx(cpu, st);
                 }
             }
         }
     }
     dev.borrow_mut().gfx.state = saved;
-    ArmGame::after_gfx(uc);
+    ArmGame::after_gfx(cpu, st);
     work.items = count;
-    charge(uc, Category::Gfx, "sprite.update", work);
+    charge(st, Category::Gfx, "sprite.update", work);
 }
 
-fn file(uc: &mut Uc, f: &str, a: &[Arg]) -> Option<Ret> {
-    let dev = uc.get_data().dev.clone();
+fn file(cpu: &mut dyn Cpu<ArmState>, st: &mut ArmState, f: &str, a: &[Arg]) -> Option<Ret> {
+    let dev = st.dev.clone();
     let handle = |h: u32| (h.wrapping_sub(FILE_BASE)) / 16;
-    let fail = |uc: &mut Uc, msg: String| {
-        uc.get_data_mut().last_file_error = Some(msg);
+    let fail = |st: &mut ArmState, msg: String| {
+        st.last_file_error = Some(msg);
     };
     let r = match f {
         "geterr" => {
-            let e = uc.get_data_mut().last_file_error.take();
-            Some(Ret::I(e.map_or(0, |e| put_str(uc, &e))))
+            let e = st.last_file_error.take();
+            Some(Ret::I(e.map_or(0, |e| put_str(cpu, st, &e))))
         }
         "open" => {
-            let path = uc.cstr(ru(a, 0));
+            let path = cpu.cstr(ru(a, 0));
             let mode = ru(a, 1);
             let write = mode & (4 | 8) != 0;
             let data = if write {
@@ -1736,14 +1749,13 @@ fn file(uc: &mut Uc, f: &str, a: &[Arg]) -> Option<Ret> {
                 match dev.borrow().fs.read(&path) {
                     Some(d) => d,
                     None => {
-                        fail(uc, format!("file not found: {path}"));
+                        fail(st, format!("file not found: {path}"));
                         return Some(Ret::I(0));
                     }
                 }
             };
-            charge(uc, Category::Io, "file.open", Work::default());
+            charge(st, Category::Io, "file.open", Work::default());
             let pos = if mode & 8 != 0 { data.len() } else { 0 };
-            let st = uc.get_data_mut();
             let id = st.next_file;
             st.next_file += 1;
             st.files.insert(
@@ -1761,15 +1773,15 @@ fn file(uc: &mut Uc, f: &str, a: &[Arg]) -> Option<Ret> {
         "close" | "flush" => {
             let id = handle(ru(a, 0));
             let fo = if f == "close" {
-                uc.get_data_mut().files.remove(&id)
+                st.files.remove(&id)
             } else {
-                uc.get_data().files.get(&id).cloned()
+                st.files.get(&id).cloned()
             };
             if let Some(fo) = fo {
                 if fo.dirty {
                     dev.borrow().fs.write(&fo.path, &fo.data);
                     charge(
-                        uc,
+                        st,
                         Category::Io,
                         "file.write",
                         Work {
@@ -1779,18 +1791,18 @@ fn file(uc: &mut Uc, f: &str, a: &[Arg]) -> Option<Ret> {
                     );
                 }
                 if f == "flush" {
-                    if let Some(x) = uc.get_data_mut().files.get_mut(&id) {
+                    if let Some(x) = st.files.get_mut(&id) {
                         x.dirty = false;
                     }
                 }
             }
-            charge(uc, Category::Io, "file.close", Work::default());
+            charge(st, Category::Io, "file.close", Work::default());
             Some(Ret::I(0))
         }
         "read" => {
             let id = handle(ru(a, 0));
             let (buf, len) = (ru(a, 1), ru(a, 2) as usize);
-            let chunk = uc.get_data_mut().files.get_mut(&id).map(|fo| {
+            let chunk = st.files.get_mut(&id).map(|fo| {
                 let end = (fo.pos + len).min(fo.data.len());
                 let c = fo.data[fo.pos.min(end)..end].to_vec();
                 fo.pos = end;
@@ -1798,9 +1810,9 @@ fn file(uc: &mut Uc, f: &str, a: &[Arg]) -> Option<Ret> {
             });
             match chunk {
                 Some(c) => {
-                    uc.write(buf, &c);
+                    cpu.write(buf, &c);
                     charge(
-                        uc,
+                        st,
                         Category::Io,
                         "file.read",
                         Work {
@@ -1815,9 +1827,9 @@ fn file(uc: &mut Uc, f: &str, a: &[Arg]) -> Option<Ret> {
         }
         "write" => {
             let id = handle(ru(a, 0));
-            let bytes = uc.bytes(ru(a, 1), ru(a, 2) as usize);
+            let bytes = cpu.bytes(ru(a, 1), ru(a, 2) as usize);
             let n = bytes.len();
-            let ok = uc.get_data_mut().files.get_mut(&id).map(|fo| {
+            let ok = st.files.get_mut(&id).map(|fo| {
                 let end = fo.pos + n;
                 if fo.data.len() < end {
                     fo.data.resize(end, 0);
@@ -1829,15 +1841,14 @@ fn file(uc: &mut Uc, f: &str, a: &[Arg]) -> Option<Ret> {
             Some(Ret::I(if ok.is_some() { n as u32 } else { u32::MAX }))
         }
         "tell" => Some(Ret::I(
-            uc.get_data()
-                .files
+            st.files
                 .get(&handle(ru(a, 0)))
                 .map_or(u32::MAX, |fo| fo.pos as u32),
         )),
         "seek" => {
             let id = handle(ru(a, 0));
             let (pos, whence) = (ri(a, 1), ru(a, 2));
-            let ok = uc.get_data_mut().files.get_mut(&id).map(|fo| {
+            let ok = st.files.get_mut(&id).map(|fo| {
                 let base = match whence {
                     1 => fo.pos as i64,
                     2 => fo.data.len() as i64,
@@ -1848,31 +1859,31 @@ fn file(uc: &mut Uc, f: &str, a: &[Arg]) -> Option<Ret> {
             Some(Ret::I(if ok.is_some() { 0 } else { u32::MAX }))
         }
         "stat" => {
-            let path = uc.cstr(ru(a, 0));
+            let path = cpu.cstr(ru(a, 0));
             let found = dev.borrow().fs.resolve_read(&path);
             let Some(p) = found else {
-                fail(uc, format!("file not found: {path}"));
+                fail(st, format!("file not found: {path}"));
                 return Some(Ret::I(u32::MAX));
             };
             let md = std::fs::metadata(&p).ok();
             let size = md.as_ref().map_or(0, |m| m.len()) as u32;
             let out = ru(a, 1);
-            uc.w32(out, p.is_dir() as u32);
-            uc.w32(out + 4, size);
+            cpu.w32(out, p.is_dir() as u32);
+            cpu.w32(out + 4, size);
             for i in 0..6 {
-                uc.w32(out + 8 + i * 4, 0);
+                cpu.w32(out + 8 + i * 4, 0);
             }
             Some(Ret::I(0))
         }
         "mkdir" => {
-            let path = uc.cstr(ru(a, 0));
+            let path = cpu.cstr(ru(a, 0));
             let d = dev.borrow();
             let ok = pdsim_device::FileSystem::clean(&path)
                 .is_some_and(|p| std::fs::create_dir_all(d.fs.data_dir.join(p)).is_ok());
             Some(Ret::I(if ok { 0 } else { u32::MAX }))
         }
         "unlink" => {
-            let path = uc.cstr(ru(a, 0));
+            let path = cpu.cstr(ru(a, 0));
             Some(Ret::I(if dev.borrow().fs.delete(&path) {
                 0
             } else {
@@ -1880,7 +1891,7 @@ fn file(uc: &mut Uc, f: &str, a: &[Arg]) -> Option<Ret> {
             }))
         }
         "rename" => {
-            let (from, to) = (uc.cstr(ru(a, 0)), uc.cstr(ru(a, 1)));
+            let (from, to) = (cpu.cstr(ru(a, 0)), cpu.cstr(ru(a, 1)));
             let d = dev.borrow();
             let ok = match (
                 pdsim_device::FileSystem::clean(&from),
@@ -1892,13 +1903,13 @@ fn file(uc: &mut Uc, f: &str, a: &[Arg]) -> Option<Ret> {
             Some(Ret::I(if ok { 0 } else { u32::MAX }))
         }
         "listfiles" => {
-            let path = uc.cstr(ru(a, 0));
+            let path = cpu.cstr(ru(a, 0));
             let (cb, ud) = (ru(a, 1), ru(a, 2));
             let names = dev.borrow().fs.list(&path);
             for n in names {
-                let p = put_str(uc, &n);
-                if let Err(e) = call(uc, cb, &[p, ud]) {
-                    uc.get_data_mut().error = Some(e);
+                let p = put_str(cpu, st, &n);
+                if let Err(e) = call(cpu, st, cb, &[p, ud]) {
+                    st.error = Some(e);
                     break;
                 }
             }

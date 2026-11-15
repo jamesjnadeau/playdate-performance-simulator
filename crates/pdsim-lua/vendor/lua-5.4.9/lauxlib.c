@@ -472,6 +472,13 @@ typedef struct UBox {
   size_t bsize;
 } UBox;
 
+/* pdsim: device (ARM32) size of UBox, for memory accounting */
+#define PDSIM_DSIZE_UBOX	8
+#include <stdint.h>
+#if UINTPTR_MAX == 0xffffffffu
+_Static_assert(sizeof(UBox) == PDSIM_DSIZE_UBOX, "UBox");
+#endif
+
 
 static void *resizebox (lua_State *L, int idx, size_t newsize) {
   void *ud;
@@ -516,7 +523,7 @@ static void getBoxMT (lua_State *L) {
 
 
 static void newbox (lua_State *L) {
-  UBox *box = (UBox *)lua_newuserdatauv(L, sizeof(UBox), 0);
+  UBox *box = (UBox *)pdsim_newuserdatauv(L, sizeof(UBox), 0, PDSIM_DSIZE_UBOX);
   box->box = NULL;
   box->bsize = 0;
   getBoxMT(L);

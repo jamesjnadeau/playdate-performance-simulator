@@ -10,6 +10,27 @@ repository.workspace = true
 pdsim-core = { path = "../pdsim-core" }
 pdsim-gfx = { path = "../pdsim-gfx" }
 pdsim-device = { path = "../pdsim-device" }
-unicorn-engine = "2.1"
+pdsim-cpu = { path = "../pdsim-cpu" }
+unicorn-engine = { version = "2.1", optional = true }
+pdsim-thumb = { path = "../pdsim-thumb", optional = true }
 capstone = "0.14"
 goblin = { version = "0.10", default-features = false, features = ["std", "elf32", "elf64", "endian_fd"] }
+
+[features]
+default = ["unicorn"]
+# The Unicorn CPU backend (a C library; GPL-2.0).
+unicorn = ["dep:unicorn-engine"]
+# The pure-Rust Thumb interpreter backend (builds for WASM).
+thumb = ["dep:pdsim-thumb"]
+
+[[test]]
+name = "c_game"
+required-features = ["unicorn"]
+
+[[test]]
+name = "thumb_vs_unicorn"
+required-features = ["unicorn", "thumb"]
+
+[[test]]
+name = "lockstep"
+required-features = ["unicorn", "thumb"]

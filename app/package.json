@@ -7,14 +7,18 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "build:web": "cargo build --release -p pdsim-wasm --target wasm32-unknown-emscripten --bin pdsim-web && tsc --noEmit && vite build --mode web",
+    "test": "vitest run"
   },
   "dependencies": {
-    "@tauri-apps/api": "2.12.4"
+    "@tauri-apps/api": "2.12.4",
+    "fflate": "0.8.2"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.12.4",
     "typescript": "5.9.3",
-    "vite": "6.4.5"
+    "vite": "6.4.5",
+    "vitest": "3.2.4"
   }
 }

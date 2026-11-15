@@ -736,8 +736,8 @@ impl Graphics {
     pub fn mark_updated_rows(&mut self, start: i32, end: i32) {
         let s = start.clamp(0, LCD_HEIGHT as i32 - 1) as usize;
         let e = end.clamp(0, LCD_HEIGHT as i32 - 1) as usize;
-        for r in s..=e {
-            self.dirty_rows[r] = true;
+        if s <= e {
+            self.dirty_rows[s..=e].fill(true);
         }
     }
 

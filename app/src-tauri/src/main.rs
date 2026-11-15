@@ -27,6 +27,8 @@ fn main() {
                 session.send(Command::Load {
                     path: game,
                     calibration: None,
+                    data_dir: None,
+                    sdk: None,
                 });
             }
             app.manage(AppSession(Mutex::new(session)));

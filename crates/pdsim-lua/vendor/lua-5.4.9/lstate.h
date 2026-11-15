@@ -159,6 +159,49 @@ struct lua_longjmp;  /* defined in ldo.c */
 /* pdsim: counts a call by game code to the C function 'f' (pdsim.c) */
 LUAI_FUNC void pdsim_countcfunc (lua_State *L, lua_CFunction f);
 
+/*
+** pdsim: memory is accounted (GCdebt/totalbytes, so GC pacing and
+** collectgarbage("count"), and the pdsim byte counters) at the object
+** sizes of the 32-bit Playdate (ARM32: 4-byte pointers, 8-byte aligned
+** double and long long), on every target, so the figures do not depend on
+** the host's pointer width. The allocator itself still gets real sizes.
+** 'pdsim_dsizeof(p)' is the device size of the type 'p' points to and
+** 'PDSIM_DSIZE(t)' that of type 't'; a type missing here is a compile
+** error. On a 32-bit target lstate.c checks every value against sizeof.
+*/
+union Vardesc; struct Labeldesc; struct LX; struct LG;  /* defined later */
+#define pdsim_dsizeof(p)	_Generic((p), \
+  char *: 1, ls_byte *: 1, Instruction *: 4, TValue *: 16, \
+  StackValue *: 16, Node *: 24, Table *: 32, UpVal *: 32, Proto *: 84, \
+  CallInfo *: 36, Upvaldesc *: 8, LocVar *: 12, AbsLineInfo *: 8, \
+  UValue *: 16, TString **: 4, Proto **: 4, UpVal **: 4, \
+  union Vardesc *: 24, struct Labeldesc *: 16, \
+  struct LX *: 120, struct LG *: 6024)
+#define PDSIM_DSIZE(t)	pdsim_dsizeof((t *)0)
+
+/* pdsim: device offsets of the variable parts of objects */
+#define PDSIM_DOFF_CCLOSURE	16  /* offsetof(CClosure, upvalue) */
+#define PDSIM_DOFF_LCLOSURE	16  /* offsetof(LClosure, upvals) */
+#define PDSIM_DOFF_TSTRING	16  /* offsetof(TString, contents) */
+#define PDSIM_DOFF_UDATA0	16  /* offsetof(Udata0, bindata) */
+#define PDSIM_DOFF_UDATA	24  /* offsetof(Udata, uv) */
+
+/* pdsim: device sizes of variable-size objects (cf. lfunc.h, lobject.h) */
+#define pdsim_dsizeCclosure(n)	(PDSIM_DOFF_CCLOSURE + PDSIM_DSIZE(TValue) * (n))
+#define pdsim_dsizeLclosure(n)	(PDSIM_DOFF_LCLOSURE + PDSIM_DSIZE(UpVal *) * (n))
+#define pdsim_dsizelstring(l)	(PDSIM_DOFF_TSTRING + ((l) + 1) * sizeof(char))
+#define pdsim_dsizeudata(nuv,nb)	(((nuv) == 0 ? PDSIM_DOFF_UDATA0 \
+  : PDSIM_DOFF_UDATA + PDSIM_DSIZE(UValue) * (nuv)) + (nb))
+
+/*
+** pdsim: a userdata's payload size is chosen by whoever creates it, so its
+** device size cannot be derived from the type. Each Udata block carries a
+** trailer (after the payload) holding the payload's device size, given to
+** pdsim_newuserdatauv; lua_newuserdatauv (host code, e.g. mlua) gives 0.
+*/
+#define pdsim_sizeudata(nuv,nb)	(sizeudata(nuv,nb) + sizeof(size_t))
+#define pdsim_udtrailer(u)	(cast_charp(u) + sizeudata((u)->nuvalue, (u)->len))
+
 
 #define BASIC_STACK_SIZE        (2*LUA_MINSTACK)
 

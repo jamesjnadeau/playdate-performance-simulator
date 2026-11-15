@@ -535,6 +535,13 @@ typedef struct {
   Rand64 s[4];
 } RanState;
 
+/* pdsim: device (ARM32) size of RanState, for memory accounting */
+#define PDSIM_DSIZE_RANSTATE	32
+#include <stdint.h>
+#if UINTPTR_MAX == 0xffffffffu
+_Static_assert(sizeof(RanState) == PDSIM_DSIZE_RANSTATE, "RanState");
+#endif
+
 
 /*
 ** Project the random integer 'ran' into the interval [0, n].
@@ -657,7 +664,8 @@ static const luaL_Reg randfuncs[] = {
 ** Register the random functions and initialize their state.
 */
 static void setrandfunc (lua_State *L) {
-  RanState *state = (RanState *)lua_newuserdatauv(L, sizeof(RanState), 0);
+  RanState *state = (RanState *)pdsim_newuserdatauv(L, sizeof(RanState), 0,
+                                                PDSIM_DSIZE_RANSTATE);
   randseed(L, state);  /* initialize with a "random" seed */
   lua_pop(L, 2);  /* remove pushed seeds */
   luaL_setfuncs(L, randfuncs, 1);
