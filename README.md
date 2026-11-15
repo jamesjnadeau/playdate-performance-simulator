@@ -93,8 +93,9 @@ npx vite preview --outDir dist          # open the printed URL
 ```
 
 Drop a game folder or `.zip` on the page. The result in `app/dist` is a static
-site with relative URLs, so it also works from a subpath (for example GitHub
-Pages). In a plain browser the page uses the in-browser engine by default; add
+site with relative URLs, so it also works from a subpath. The Pages workflow
+publishes it on every push to `main`, at
+<https://jamesjnadeau.github.io/playdate-performance-simulator/>. In a plain browser the page uses the in-browser engine by default; add
 `?backend=ws` (or `?ws=ws://host:8765`) to talk to `pdsim serve` instead.
 Traces are downloaded as `pdsim-trace-<frame>.json`.
 
