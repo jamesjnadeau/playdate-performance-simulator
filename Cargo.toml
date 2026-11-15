@@ -6,6 +6,7 @@ members = [
     "crates/pdsim-device",
     "crates/pdsim-lua",
     "crates/pdsim-cpu",
+    "crates/pdsim-thumb",
     "crates/pdsim-arm",
     "crates/pdsim-runner",
     "crates/pdsim-session",

@@ -2541,6 +2541,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "pdsim-thumb"
+version = "0.1.0"
+dependencies = [
+ "pdsim-cpu",
+]
+
+[[package]]
 name = "pdsim-wasm"
 version = "0.1.0"
 dependencies = [
