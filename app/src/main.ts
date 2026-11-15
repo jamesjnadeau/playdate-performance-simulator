@@ -1,4 +1,6 @@
 import { connect, type Event } from "./backend";
+import { traceFileName } from "./wasm/files";
+import { hostBehind, type PacingSample } from "./wasm/pacing";
 import { gameName, gamePaths, readKept, sdkPaths, unzipEntries } from "./wasm/files";
 import { fromDrop, fromInput, isZip, type Picked } from "./wasm/pick";
 import {
@@ -363,6 +365,31 @@ function schedule() {
   });
 }
 
+function downloadText(name: string, text: string) {
+  const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// "Host slower than device": in the in-browser engine, device time falling
+// behind real time in device mode (the stats events have no explicit signal).
+let pacing: { device: boolean; speed: number; last: PacingSample | null } = { device: false, speed: 1, last: null };
+function setHostSlow(slow: boolean) {
+  $("hostSlow").hidden = !slow;
+}
+function watchPacing(e: Event) {
+  if (backend.kind !== "wasm" || !pacing.device) return;
+  const cur = { wallMs: performance.now(), deviceMs: e.deviceMs as number };
+  if (!pacing.last) { pacing.last = cur; return; }
+  const behind = hostBehind(pacing.last, cur, pacing.speed);
+  if (behind === null) return;
+  setHostSlow(behind);
+  pacing.last = cur;
+}
+
 backend.onEvent((e) => {
   switch (e.type) {
     case "frame":
@@ -370,6 +397,7 @@ backend.onEvent((e) => {
       schedule();
       break;
     case "stats":
+      watchPacing(e);
       frames.push(...e.frames);
       if (frames.length > MAX_FRAMES) frames.splice(0, frames.length - MAX_FRAMES);
       updateTiles(e);
@@ -387,6 +415,8 @@ backend.onEvent((e) => {
       playBtn.textContent = running ? "Pause" : "Play";
       $<HTMLSelectElement>("mode").value = e.mode;
       $<HTMLInputElement>("break").checked = e.breakOnOverBudget;
+      pacing = { device: e.mode === "device" && e.running, speed: e.speed ?? 1, last: null };
+      setHostSlow(false);
       break;
     case "loaded":
       cpuHz = e.cpuHz;
@@ -410,6 +440,10 @@ backend.onEvent((e) => {
       break;
     case "traceExported":
       toast(`Trace of ${e.frames} frames written to ${e.path}\nOpen it in ui.perfetto.dev or chrome://tracing.`);
+      break;
+    case "traceData":
+      downloadText(traceFileName(e.frame), JSON.stringify(e.trace));
+      toast(`Trace of ${e.frames} frames downloaded as ${traceFileName(e.frame)}\nOpen it in ui.perfetto.dev or chrome://tracing.`);
       break;
     case "error":
       toast(e.message, true);

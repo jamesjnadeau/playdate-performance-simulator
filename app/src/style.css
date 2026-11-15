@@ -108,3 +108,4 @@ td:first-child { font-family: ui-monospace, monospace; font-size: 12px; word-bre
 td:not(:first-child), th:not(:first-child) { text-align: right; white-space: nowrap; }
 .toast { position: fixed; bottom: 16px; right: 16px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; display: none; max-width: 520px; white-space: pre-wrap; }
 .toast.error { border-color: var(--critical); }
+.badge.slow { margin-left: 0; color: #c98500; }

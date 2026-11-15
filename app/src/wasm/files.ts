@@ -79,3 +79,8 @@ export function withHostPaths(cmd: Command, gameName: string, haveSdk: boolean):
   if (cmd.type !== "load") return cmd;
   return { ...cmd, dataDir: `/data/${gameName}`, ...(haveSdk ? { sdk: "/sdk" } : {}) };
 }
+
+/** The download name for a trace of the frame the export was requested at. */
+export function traceFileName(frame: number): string {
+  return `pdsim-trace-${frame}.json`;
+}

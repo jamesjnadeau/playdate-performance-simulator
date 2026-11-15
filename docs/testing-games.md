@@ -153,5 +153,8 @@ Keys: arrows = d-pad, `X`/`K` = A, `Z`/`J` = B, space = play/pause,
 Turn on **break on over-budget frame** to stop at the first slow frame and
 see its flame view.
 
-Without Tauri, run `pdsim serve MyGame` and `npm run dev` in `app/`, then
-open the Vite URL in a browser.
+Without Tauri, open the app in a plain browser: it runs the simulator
+in-browser by default (Lua games; see "Run in the browser" in the README, and
+serve `pdsim-web.js` next to the page or build it with `npm run build:web`).
+To use the native engine instead, run `pdsim serve MyGame` and `npm run dev`
+in `app/`, then open the Vite URL with `?backend=ws` (or `?ws=ws://host:8765`).

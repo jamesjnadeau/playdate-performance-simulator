@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { readKept, wantsDir, gameName, gamePaths, sdkPaths, unzipEntries, withHostPaths } from "./files";
+import { traceFileName, readKept, wantsDir, gameName, gamePaths, sdkPaths, unzipEntries, withHostPaths } from "./files";
 import { zipSync } from "fflate";
 
 const e = (...paths: string[]) => paths.map((path) => ({ path }));
@@ -83,3 +83,5 @@ test("readKept reads only entries that have a destination", async () => {
   expect(read).toEqual(["sdk/CoreLibs/a.lua", "sdk/C_API/b.h"]);
   expect(out.map((o) => o.dest)).toEqual(["/sdk/CoreLibs/a.lua", "/sdk/C_API/b.h"]);
 });
+
+test("traceFileName", () => expect(traceFileName(130)).toBe("pdsim-trace-130.json"));

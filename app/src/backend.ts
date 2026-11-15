@@ -58,7 +58,7 @@ export async function connect(): Promise<Backend> {
 }
 
 function connectWasm(params: URLSearchParams): Backend {
-  const wasmUrl = params.get("wasm") ?? new URL("/pdsim-web.js", location.origin).href;
+  const wasmUrl = params.get("wasm") ?? new URL("pdsim-web.js", document.baseURI).href;
   // The module's URL travels as the worker's name.
   const worker = new Worker(new URL("./wasm/worker.ts", import.meta.url), { type: "module", name: wasmUrl });
   const listeners: ((e: Event) => void)[] = [];

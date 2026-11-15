@@ -77,6 +77,25 @@ make -C examples/c-stress device_bin
 cargo run --release -p pdsim-cli -- run examples/c-stress --frames 300
 ```
 
+## Run in the browser
+
+The simulator also runs entirely in a browser tab: no server, no install.
+Lua games only for now (C games need the ARM emulator, which is not in the
+browser build). The Playdate SDK is optional; without it the built-in
+CoreLibs stand-ins are used, and you can load an SDK folder from the page.
+
+```bash
+source ~/emsdk/emsdk_env.sh             # Emscripten 6.0.13, and: rustup target add wasm32-unknown-emscripten
+cd app && npm ci && npm run build:web   # writes app/dist
+npx vite preview --outDir dist          # open the printed URL
+```
+
+Drop a game folder or `.zip` on the page. The result in `app/dist` is a static
+site with relative URLs, so it also works from a subpath (for example GitHub
+Pages). In a plain browser the page uses the in-browser engine by default; add
+`?backend=ws` (or `?ws=ws://host:8765`) to talk to `pdsim serve` instead.
+Traces are downloaded as `pdsim-trace-<frame>.json`.
+
 ## CLI
 
 ```text

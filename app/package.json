@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "tauri": "tauri",
+    "build:web": "cargo build --release -p pdsim-wasm --target wasm32-unknown-emscripten --bin pdsim-web && tsc --noEmit && vite build --mode web",
     "test": "vitest run"
   },
   "dependencies": {

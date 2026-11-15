@@ -96,4 +96,14 @@ callbacks without holding borrows.
   `breakOnOverBudget`, `exportTrace`, …).
 - The Tauri app (`app/`) relays these over IPC; `pdsim serve` relays them over
   WebSocket so the same frontend runs in a browser.
+- `SessionCore` (in `pdsim-session`) is the session without threads, channels
+  or `Instant`: the host calls `handle(command, now_ms)` and `tick(now_ms)` and
+  collects the events. The threaded `Session` is a thin native wrapper around
+  it. `pdsim-wasm` (bin `pdsim-web`, built for `wasm32-unknown-emscripten`)
+  exposes the core through a four-function C ABI; the app runs it in a Web
+  Worker as a third transport, `kind: "wasm"`, speaking the same
+  command/event protocol, so the UI is unchanged. Emscripten supplies the
+  in-memory filesystem, so games and the SDK are copied in before `load`, and
+  traces come back as `traceData` events (the page downloads them) instead of
+  files. The build is single-threaded; Lua only. See `docs/wasm-port.md`.
 - `pdsim run` drives a game headless and writes reports and traces.
