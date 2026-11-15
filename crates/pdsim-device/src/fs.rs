@@ -1,6 +1,7 @@
 //! The game's file system: the read-only game folder and a writable data
 //! folder (where `playdate.datastore` and `playdate.file` writes go).
 
+use pdsim_gfx::{Bitmap, ImageError};
 use std::path::{Component, Path, PathBuf};
 
 /// Sandboxed file access.
@@ -37,23 +38,42 @@ impl FileSystem {
         Some(out)
     }
 
-    /// Where to read `path` from: the data folder first, then the game.
-    pub fn resolve_read(&self, path: &str) -> Option<PathBuf> {
-        let p = Self::clean(path)?;
-        let d = self.data_dir.join(&p);
-        if d.exists() {
-            return Some(d);
-        }
-        let g = self.game_dir.join(&p);
-        if g.exists() {
-            return Some(g);
-        }
+    /// Every place `path` may be read from, in lookup order: the data
+    /// folder, the game folder, then any extra root whose prefix matches.
+    /// The paths need not exist.
+    pub fn candidates(&self, path: &str) -> Vec<PathBuf> {
+        let Some(p) = Self::clean(path) else { return vec![] };
+        let mut out = vec![self.data_dir.join(&p), self.game_dir.join(&p)];
         let ps = p.to_string_lossy().replace('\\', "/");
-        self.extra_roots.iter().find_map(|(prefix, root)| {
-            let rest = ps.strip_prefix(prefix.as_str())?;
-            let e = root.join(rest);
-            e.exists().then_some(e)
-        })
+        out.extend(
+            self.extra_roots
+                .iter()
+                .filter_map(|(prefix, root)| Some(root.join(ps.strip_prefix(prefix.as_str())?))),
+        );
+        out
+    }
+
+    /// Where to read `path` from: the data folder first, then the game,
+    /// then the extra roots.
+    pub fn resolve_read(&self, path: &str) -> Option<PathBuf> {
+        self.candidates(path).into_iter().find(|p| p.exists())
+    }
+
+    /// Loads the image table `path` (`name-table-W-H.png` or `name-N.png`
+    /// files), from the first place in `candidates` that has it.
+    pub fn load_table(&self, path: &str) -> Result<Vec<Bitmap>, ImageError> {
+        let path = path.strip_suffix(".pdt").unwrap_or(path);
+        let mut err = None;
+        for base in self.candidates(path) {
+            if !base.parent().is_some_and(|d| d.is_dir()) {
+                continue;
+            }
+            match pdsim_gfx::table::load_table(&base) {
+                Ok(v) => return Ok(v),
+                Err(e) => err = err.or(Some(e)),
+            }
+        }
+        Err(err.unwrap_or_else(|| ImageError::Other(format!("image table not found: {path}"))))
     }
 
     /// Like `resolve_read`, trying each extension in turn when `path` has
@@ -138,6 +158,25 @@ mod tests {
         assert_eq!(fs.list(""), vec!["f.txt".to_string()]);
         assert!(fs.delete("f.txt"));
         assert_eq!(fs.read("f.txt").unwrap(), b"game");
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn tables_load_from_extra_roots() {
+        let root = std::env::temp_dir().join(format!("pdsim-fs-table-{}", std::process::id()));
+        let mut fs = FileSystem::new(root.join("game"), root.join("data"));
+        std::fs::create_dir_all(&fs.game_dir).unwrap();
+        let sdk = root.join("sdk/CoreLibs");
+        std::fs::create_dir_all(sdk.join("assets/crank")).unwrap();
+        let png = Bitmap::new(8, 2, pdsim_gfx::Color::White).encode_png().unwrap();
+        std::fs::write(sdk.join("assets/crank/frames-table-4-2.png"), png).unwrap();
+        assert!(fs.load_table("CoreLibs/assets/crank/frames").is_err());
+        fs.extra_roots.push(("CoreLibs/".into(), sdk));
+        assert_eq!(fs.load_table("CoreLibs/assets/crank/frames").unwrap().len(), 2);
+        assert_eq!(
+            fs.load_table("CoreLibs/assets/crank/frames.pdt").unwrap().len(),
+            2
+        );
         std::fs::remove_dir_all(root).ok();
     }
 }

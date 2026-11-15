@@ -1129,13 +1129,8 @@ fn run(
         }
         "graphics.loadBitmapTable" | "graphics.loadIntoBitmapTable" => {
             let path = cpu.cstr(ru(a, 0));
-            let base = {
-                let d = dev.borrow();
-                let clean =
-                    pdsim_device::FileSystem::clean(path.trim_end_matches(".pdt")).unwrap_or_default();
-                d.fs.game_dir.join(clean)
-            };
-            match pdsim_gfx::table::load_table(&base) {
+            let loaded = dev.borrow().fs.load_table(&path);
+            match loaded {
                 Ok(v) => {
                     let ids: Vec<u32> = v
                         .into_iter()

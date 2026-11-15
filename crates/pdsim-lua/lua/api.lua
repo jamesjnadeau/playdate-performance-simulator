@@ -909,7 +909,8 @@ function Sprite.update(self)
 	local list = pd.s_list()
 	for i = 1, #list do
 		local s = allSprites[list[i]]
-		pd.s_set(list[i], "hasDraw", s ~= nil and s.draw ~= nil)
+		-- As on device, a sprite's draw function runs only when it has no image.
+		pd.s_set(list[i], "hasDraw", s ~= nil and s.draw ~= nil and rawget(s, "_image") == nil)
 	end
 	pd.s_draw(drawCallback)
 end

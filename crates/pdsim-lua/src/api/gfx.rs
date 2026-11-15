@@ -649,18 +649,8 @@ pub fn register(lua: &Lua, pd: &Table, ctx: &CtxRef) -> Result<()> {
     // ---- image tables
     reg(lua, pd, "t_load", ctx, |lua, c, a| {
         let path = a.str(0).unwrap_or_default();
-        let base = {
-            let d = c.dev();
-            let clean = pdsim_device::FileSystem::clean(&path).unwrap_or_default();
-            let g = d.fs.game_dir.join(&clean);
-            let dd = d.fs.data_dir.join(&clean);
-            if dd.parent().is_some_and(|p| p.exists()) && pdsim_gfx::table::load_table(&dd).is_ok() {
-                dd
-            } else {
-                g
-            }
-        };
-        match pdsim_gfx::table::load_table(&base) {
+        let loaded = c.dev().fs.load_table(&path);
+        match loaded {
             Ok(v) => {
                 let t = lua.create_table()?;
                 let mut bytes = 0;

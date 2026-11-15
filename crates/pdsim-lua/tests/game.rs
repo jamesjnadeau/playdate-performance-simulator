@@ -245,6 +245,97 @@ fn sprites_draw_and_collide() {
 }
 
 #[test]
+fn sprite_draw_runs_only_without_an_image() {
+    let t = TempGame::new(
+        "spritedraw",
+        r#"
+        import "CoreLibs/object"
+        import "CoreLibs/sprites"
+        local gfx = playdate.graphics
+        imaged, plain = 0, 0
+        local a = gfx.sprite.new(gfx.image.new(10, 10, gfx.kColorBlack))
+        function a:draw() imaged += 1 end
+        a:moveTo(50, 50)
+        a:add()
+        local b = gfx.sprite.new()
+        b:setSize(10, 10)
+        function b:draw() plain += 1 end
+        b:moveTo(150, 50)
+        b:add()
+        function playdate.update() gfx.sprite.update() end
+        "#,
+    );
+    let mut g = t.load();
+    run(&mut g, 2);
+    let lua = g.lua();
+    assert_eq!(
+        lua.globals().get::<i64>("imaged").unwrap(),
+        0,
+        "draw() ran on an image sprite"
+    );
+    assert!(
+        lua.globals().get::<i64>("plain").unwrap() > 0,
+        "draw() never ran on an imageless sprite"
+    );
+    assert!(
+        !g.device().borrow().gfx.frame().get(50, 50),
+        "image sprite still drawn"
+    );
+}
+
+#[test]
+fn image_draw_anchored_and_centered() {
+    let t = TempGame::new(
+        "anchored",
+        r#"
+        local gfx = playdate.graphics
+        local img = gfx.image.new(10, 10, gfx.kColorBlack)
+        function playdate.update()
+            gfx.clear(gfx.kColorWhite)
+            img:drawAnchored(100, 100, 1, 1)
+            img:drawCentered(200, 100)
+        end
+        "#,
+    );
+    let mut g = t.load();
+    run(&mut g, 1);
+    let dev = g.device().borrow();
+    let f = dev.gfx.frame();
+    // drawAnchored(100, 100, 1, 1) covers 90..100.
+    assert!(!f.get(90, 90) && !f.get(99, 99));
+    assert!(f.get(100, 100) && f.get(89, 89));
+    // drawCentered(200, 100) covers 195..205.
+    assert!(!f.get(195, 95) && !f.get(204, 104));
+    assert!(f.get(194, 95) && f.get(205, 104));
+}
+
+#[test]
+fn image_tables_load_from_the_sdk() {
+    let t = TempGame::new(
+        "sdktable",
+        r#"
+        local gfx = playdate.graphics
+        local tbl, err = gfx.imagetable.new("CoreLibs/assets/crank/frames")
+        count = tbl and #tbl or -1
+        loadErr = err
+        function playdate.update() end
+        "#,
+    );
+    let sdk = t.dir.join("sdk");
+    let crank = sdk.join("CoreLibs/assets/crank");
+    std::fs::create_dir_all(&crank).unwrap();
+    let png = pdsim_gfx::Bitmap::new(12, 4, pdsim_gfx::Color::White)
+        .encode_png()
+        .unwrap();
+    std::fs::write(crank.join("frames-table-4-4.png"), png).unwrap();
+    let mut g = t.load_with(Some(sdk)).unwrap();
+    run(&mut g, 1);
+    let lua = g.lua();
+    let err: Option<String> = lua.globals().get("loadErr").unwrap();
+    assert_eq!(lua.globals().get::<i64>("count").unwrap(), 3, "{err:?}");
+}
+
+#[test]
 fn errors_stop_the_game_with_a_message() {
     let t = TempGame::new("err", "function playdate.update() local x = nil; x.y = 1 end");
     let mut g = t.load();
@@ -326,6 +417,8 @@ fn sdk_corelibs_load_when_available() {
             gfx.drawTextInRect("Hello from CoreLibs", 10, 10, 200, 40)
             gfx.drawCircleAtPoint(100, 100, 20)
             playdate.timer.updateTimers()
+            -- Draws the SDK's crank image table (CoreLibs/assets/crank).
+            playdate.ui.crankIndicator:draw()
         end
         "#,
     );
