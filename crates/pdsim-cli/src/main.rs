@@ -202,6 +202,8 @@ fn serve(game: Option<PathBuf>, port: u16) -> Result<()> {
             session.send(pdsim_session::Command::Load {
                 path: g.display().to_string(),
                 calibration: None,
+                data_dir: None,
+                sdk: None,
             });
         }
         'conn: loop {

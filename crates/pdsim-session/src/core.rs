@@ -128,7 +128,12 @@ impl SessionCore {
     /// Applies a command. `now_ms` is the host clock in milliseconds.
     pub fn handle(&mut self, c: Command, now_ms: f64) {
         match c {
-            Command::Load { path, calibration } => self.load(path, calibration, now_ms),
+            Command::Load {
+                path,
+                calibration,
+                data_dir,
+                sdk,
+            } => self.load(path, calibration, data_dir, sdk, now_ms),
             Command::Play => {
                 self.running = true;
                 self.reanchor(now_ms);
@@ -207,7 +212,14 @@ impl SessionCore {
         }
     }
 
-    fn load(&mut self, path: String, calibration: Option<String>, now_ms: f64) {
+    fn load(
+        &mut self,
+        path: String,
+        calibration: Option<String>,
+        data_dir: Option<String>,
+        sdk: Option<String>,
+        now_ms: f64,
+    ) {
         self.game = None;
         self.history.clear();
         self.pending.clear();
@@ -219,10 +231,16 @@ impl SessionCore {
             },
             None => Calibration::default_estimates(),
         };
-        let cfg = pdsim_runner::RunConfig {
+        let mut cfg = pdsim_runner::RunConfig {
             calibration: cal.clone(),
             ..Default::default()
         };
+        if let Some(d) = data_dir.filter(|s| !s.is_empty()) {
+            cfg.data_dir = Some(PathBuf::from(d));
+        }
+        if let Some(s) = sdk.filter(|s| !s.is_empty()) {
+            cfg.sdk = Some(PathBuf::from(s));
+        }
         match pdsim_runner::load(std::path::Path::new(&path), &cfg) {
             Ok(g) => {
                 let ev = json!({
@@ -349,28 +367,21 @@ impl SessionCore {
         }));
     }
 
+    /// Emits the trace as data; the host decides where it goes (a file for
+    /// native hosts, a download in a browser).
     fn export_trace(&mut self, path: Option<String>) {
         let frames: Vec<FrameStats> = self.history.iter().cloned().collect();
-        let t = trace::chrome_trace(&frames);
-        let path = path
-            .filter(|p| !p.is_empty())
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                let base = std::env::var_os("HOME")
-                    .map(PathBuf::from)
-                    .unwrap_or_else(std::env::temp_dir);
-                let n = self
-                    .game
-                    .as_ref()
-                    .map_or(0, |g| g.device().borrow().scheduler.frame_index());
-                base.join(format!("pdsim-trace-{n}.json"))
-            });
-        match std::fs::write(&path, t.to_string()) {
-            Ok(()) => (self.emit)(
-                json!({"type": "traceExported", "path": path.display().to_string(), "frames": frames.len()}),
-            ),
-            Err(e) => self.error(format!("writing {}: {e}", path.display())),
-        }
+        let n = self
+            .game
+            .as_ref()
+            .map_or(0, |g| g.device().borrow().scheduler.frame_index());
+        (self.emit)(json!({
+            "type": "traceData",
+            "path": path.filter(|p| !p.is_empty()),
+            "frame": n,
+            "frames": frames.len(),
+            "trace": trace::chrome_trace(&frames),
+        }));
     }
 }
 
@@ -418,6 +429,8 @@ mod tests {
             Command::Load {
                 path,
                 calibration: None,
+                data_dir: None,
+                sdk: None,
             },
             0.0,
         );
@@ -493,5 +506,45 @@ mod tests {
         assert_eq!(frames(&ev.borrow()), n + 1);
         assert_eq!(c.tick(2000.0).next_wake_ms, None);
         assert_eq!(frames(&ev.borrow()), n + 1);
+    }
+
+    #[test]
+    fn export_trace_emits_trace_data_without_writing_files() {
+        let (mut c, ev) = core();
+        load_example(&mut c);
+        c.handle(Command::SetMode { mode: "turbo".into() }, 0.0);
+        for t in 1..=3 {
+            c.tick(t as f64);
+        }
+        c.handle(Command::ExportTrace { path: None }, 4.0);
+        let last = ev.borrow().last().unwrap().clone();
+        assert_eq!(last["type"], "traceData");
+        assert_eq!(last["frames"], 3);
+        assert!(last["path"].is_null());
+        assert!(!last["trace"]["traceEvents"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn load_uses_the_given_data_dir() {
+        let (mut c, _ev) = core();
+        let saves = std::env::temp_dir()
+            .join(format!("pdsim-session-test-{}", std::process::id()))
+            .join("saves");
+        let _ = std::fs::remove_dir_all(saves.parent().unwrap());
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/lua-stress")
+            .display()
+            .to_string();
+        c.handle(
+            Command::Load {
+                path,
+                calibration: None,
+                data_dir: Some(saves.display().to_string()),
+                sdk: None,
+            },
+            0.0,
+        );
+        assert!(saves.is_dir());
+        let _ = std::fs::remove_dir_all(saves.parent().unwrap());
     }
 }

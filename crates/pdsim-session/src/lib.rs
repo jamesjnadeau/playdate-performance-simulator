@@ -25,7 +25,14 @@ pub enum Command {
     /// Load (or reload) a game.
     Load {
         path: String,
+        #[serde(default)]
         calibration: Option<String>,
+        /// Where the game keeps its save data (default: next to the game).
+        #[serde(default, rename = "dataDir")]
+        data_dir: Option<String>,
+        /// Playdate SDK path (default: from the environment).
+        #[serde(default)]
+        sdk: Option<String>,
     },
     Play,
     Pause,
@@ -109,11 +116,37 @@ impl Session {
     }
 }
 
+/// Native hosts have a filesystem: turns a `traceData` event into the trace
+/// file plus `traceExported` (or `error`). Other events pass through (`None`).
+fn write_trace(ev: &Value) -> Option<Value> {
+    if ev["type"] != "traceData" {
+        return None;
+    }
+    let path = match ev["path"].as_str() {
+        Some(p) => std::path::PathBuf::from(p),
+        None => {
+            let base = std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(std::env::temp_dir);
+            base.join(format!("pdsim-trace-{}.json", ev["frame"]))
+        }
+    };
+    Some(match std::fs::write(&path, ev["trace"].to_string()) {
+        Ok(()) => {
+            serde_json::json!({"type": "traceExported", "path": path.display().to_string(), "frames": ev["frames"]})
+        }
+        Err(e) => serde_json::json!({"type": "error", "message": format!("writing {}: {e}", path.display())}),
+    })
+}
+
 /// The session thread: drives a [`SessionCore`] from a command queue.
 fn run_thread(emit: Box<dyn Fn(Value)>, rx: Receiver<Command>) {
     let start = Instant::now();
     let now_ms = || start.elapsed().as_secs_f64() * 1000.0;
-    let mut core = SessionCore::new(emit);
+    let mut core = SessionCore::new(Box::new(move |ev| match write_trace(&ev) {
+        Some(out) => emit(out),
+        None => emit(ev),
+    }));
     loop {
         let now = now_ms();
         let timeout = match core.tick(now).next_wake_ms {
@@ -178,6 +211,8 @@ mod tests {
         s.send(Command::Load {
             path: example(),
             calibration: None,
+            data_dir: None,
+            sdk: None,
         });
         assert!(
             wait_for(&events, "loaded", Duration::from_secs(20)).is_some(),
@@ -225,6 +260,8 @@ mod tests {
         s.send(Command::Load {
             path: example(),
             calibration: None,
+            data_dir: None,
+            sdk: None,
         });
         let b = wait_for(&events, "break", Duration::from_secs(30));
         assert!(b.is_some(), "no break event");
@@ -243,5 +280,39 @@ mod tests {
             .decode(f["fb"].as_str().unwrap())
             .unwrap();
         assert_eq!(fb.len(), 52 * 240);
+    }
+
+    #[test]
+    fn native_session_still_writes_trace_files() {
+        let events = Arc::new(Mutex::new(vec![]));
+        let ev = events.clone();
+        let s = Session::spawn(move |v| ev.lock().unwrap().push(v));
+        s.send(Command::Load {
+            path: example(),
+            calibration: None,
+            data_dir: None,
+            sdk: None,
+        });
+        assert!(wait_for(&events, "frame", Duration::from_secs(20)).is_some());
+        let out = std::env::temp_dir().join(format!("pdsim-trace-test-{}.json", std::process::id()));
+        s.send(Command::ExportTrace {
+            path: Some(out.display().to_string()),
+        });
+        let e = wait_for(&events, "traceExported", Duration::from_secs(5)).expect("traceExported");
+        assert_eq!(e["path"], out.display().to_string());
+        let t: Value = serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
+        assert!(t["traceEvents"].is_array());
+        let _ = std::fs::remove_file(&out);
+    }
+
+    #[test]
+    fn load_json_without_new_fields_still_parses() {
+        let c = serde_json::from_value::<Command>(serde_json::json!({"type":"load","path":"x"}));
+        assert!(c.is_ok());
+        let c = serde_json::from_value::<Command>(
+            serde_json::json!({"type":"load","path":"x","dataDir":"d","sdk":"s"}),
+        )
+        .unwrap();
+        assert!(matches!(c, Command::Load { data_dir: Some(d), sdk: Some(_), .. } if d == "d"));
     }
 }
