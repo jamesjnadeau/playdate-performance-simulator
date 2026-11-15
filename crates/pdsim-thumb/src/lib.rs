@@ -341,4 +341,12 @@ impl<S> Cpu<S> for ThumbCpu {
     fn emu_stop(&mut self) {
         self.stop = true;
     }
+
+    fn set_write_log(&mut self, on: bool) {
+        self.mem.set_log(on);
+    }
+
+    fn write_log(&mut self) -> Vec<(u32, Vec<u8>)> {
+        self.mem.drain_log()
+    }
 }

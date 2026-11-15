@@ -90,7 +90,13 @@ pub struct ArmState {
     /// Instructions per class not yet reported as features.
     class_counts: [f64; 12],
     registers: f64,
+    /// Called at every `on_block` (see [`ArmGame::set_block_probe`]).
+    probe: Option<BlockProbe>,
 }
+
+/// A callback at the start of every basic block in the code region, with
+/// the block's address and size, before it runs.
+pub type BlockProbe = Box<dyn FnMut(&mut dyn Cpu<ArmState>, u32, u32)>;
 
 /// Deepest shadow call stack kept; each distinct stack is interned in full.
 const MAX_STACK_DEPTH: usize = 128;
@@ -403,6 +409,10 @@ struct ArmHooks;
 impl Hooks<ArmState> for ArmHooks {
     /// Costs a basic block of game code.
     fn on_block(&self, cpu: &mut dyn Cpu<ArmState>, st: &mut ArmState, a: u32, size: u32) {
+        if let Some(mut probe) = st.probe.take() {
+            probe(cpu, a, size);
+            st.probe = Some(probe);
+        }
         // Only game code is costed (the Code region is rounded up past
         // `text_end`, and blocks there are not).
         if !(CODE_BASE..=st.image.text_end).contains(&a) {
@@ -592,6 +602,7 @@ impl ArmGame {
             button_cb: None,
             class_counts: [0.0; 12],
             registers: 0.0,
+            probe: None,
         };
         // The backend's error already names the step ("unicorn: ..." or
         // "cpu model: ...").
@@ -658,6 +669,15 @@ impl ArmGame {
     /// The emulator-side state (for tests and tools).
     pub fn state(&mut self) -> &mut ArmState {
         &mut self.st
+    }
+
+    /// For differential tests: calls `probe` at every block the CPU reports
+    /// (including blocks past `text_end`, which are not costed) and records
+    /// the game's stores, for the probe to drain with [`Cpu::write_log`].
+    #[doc(hidden)]
+    pub fn set_block_probe(&mut self, probe: BlockProbe) {
+        self.cpu.set_write_log(true);
+        self.st.probe = Some(probe);
     }
 
     /// Calls a function in the game with integer arguments.

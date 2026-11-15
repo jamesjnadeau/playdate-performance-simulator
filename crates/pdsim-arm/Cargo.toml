@@ -30,3 +30,7 @@ required-features = ["unicorn"]
 [[test]]
 name = "thumb_vs_unicorn"
 required-features = ["unicorn", "thumb"]
+
+[[test]]
+name = "lockstep"
+required-features = ["unicorn", "thumb"]

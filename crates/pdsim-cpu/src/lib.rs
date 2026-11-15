@@ -85,6 +85,14 @@ pub trait Cpu<S> {
     ) -> Result<(), CpuError>;
     /// Stops the innermost `emu_start` at the end of the current block.
     fn emu_stop(&mut self);
+    /// Starts (`true`) or stops recording the game's stores, for
+    /// differential testing. Stopping drops what was recorded. Call it
+    /// outside `emu_start`.
+    fn set_write_log(&mut self, on: bool);
+    /// The game stores recorded since the last call, oldest first: one
+    /// `(address, bytes)` per memory access. [`Cpu::mem_write`] is not
+    /// recorded. Empty when not recording.
+    fn write_log(&mut self) -> Vec<(u32, Vec<u8>)>;
 }
 
 /// Callbacks from a running [`Cpu`].
