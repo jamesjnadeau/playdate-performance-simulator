@@ -58,8 +58,14 @@ export function gameName(entries: { path: string }[]): string {
 /** Like gamePaths for /sdk, keeping only CoreLibs, Resources/Fonts and C_API. */
 export function sdkPaths(entries: { path: string }[]): Map<string, string> {
   const list = usable(entries);
-  const at = (name: string) => list.find((e) => e.segs.includes(name))?.segs.indexOf(name);
-  const base = at("C_API") ?? at("CoreLibs");
+  // The shallowest C_API or CoreLibs folder marks the SDK root.
+  let base: number | undefined;
+  for (const e of list) {
+    for (const name of ["C_API", "CoreLibs"]) {
+      const i = e.segs.indexOf(name);
+      if (i >= 0 && e.segs.length - i >= 2 && (base === undefined || i < base)) base = i;
+    }
+  }
   const out = new Map<string, string>();
   if (base === undefined) return out;
   for (const e of list) {

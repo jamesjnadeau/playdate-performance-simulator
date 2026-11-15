@@ -55,6 +55,14 @@ test("sdkPaths works with no wrapping folder", () => {
   expect([...sdkPaths(e("C_API/pd_api.h", "CoreLibs/x.lua")).values()].sort()).toEqual(["/sdk/C_API/pd_api.h", "/sdk/CoreLibs/x.lua"]);
 });
 
+test("sdkPaths picks the shallowest SDK root when a copy is nested", () => {
+  const m = sdkPaths(e("SDK/CoreLibs/a.lua", "SDK/C_API/pd_api.h", "SDK/Examples/Game/CoreLibs/b.lua", "SDK/Examples/Game/C_API/c.h"));
+  expect(obj(m)).toEqual({
+    "SDK/CoreLibs/a.lua": "/sdk/CoreLibs/a.lua",
+    "SDK/C_API/pd_api.h": "/sdk/C_API/pd_api.h",
+  });
+});
+
 test("load injects dataDir under /data", () => {
   const cmd = { type: "load", path: "/game" };
   expect(withHostPaths(cmd, "mygame", true)).toEqual({ ...cmd, dataDir: "/data/mygame", sdk: "/sdk" });

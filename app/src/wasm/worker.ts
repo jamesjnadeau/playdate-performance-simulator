@@ -52,7 +52,7 @@ const PERSISTED = ["/data", "/sdk"];
 const SYNC_MS = 1000;
 
 let syncAgain = false;
-const haveSdk = () => m.FS.analyzePath("/sdk/C_API").exists;
+const haveSdk = () => m.FS.analyzePath("/sdk/C_API").exists || m.FS.analyzePath("/sdk/CoreLibs").exists;
 const announceSdk = () => post({ kind: "event", event: { type: "sdk", loaded: haveSdk() } });
 
 function syncOut() {
@@ -89,31 +89,43 @@ function flush() {
   }
 }
 
+// One pump chain at a time: `chain` is set while a timer or MessageChannel
+// wake-up is pending or the pump is running, and cleared when it goes idle.
+let chain = false;
+
 function pump() {
   timer = undefined;
-  const start = performance.now();
-  let delay: number | null;
-  for (;;) {
-    const now = performance.now();
-    delay = delayFor(m._pdsim_tick(now), now);
-    if (delay !== 0 || now - start >= SLICE_MS) break;
-  }
-  flush();
-  if (delay === null) return;
-  if (delay > 0) {
-    timer = setTimeout(pump, delay);
-  } else {
-    // Slice used up with work still due: yield to the event loop so incoming
-    // commands get handled, without the 4 ms setTimeout clamp.
-    yielding ??= new MessageChannel();
-    yielding.port1.onmessage = () => pump();
-    yielding.port2.postMessage(0);
+  try {
+    const start = performance.now();
+    let delay: number | null;
+    for (;;) {
+      const now = performance.now();
+      delay = delayFor(m._pdsim_tick(now), now);
+      if (delay !== 0 || now - start >= SLICE_MS) break;
+    }
+    flush();
+    if (delay === null) {
+      chain = false;
+    } else if (delay > 0) {
+      timer = setTimeout(pump, delay);
+    } else {
+      // Slice used up with work still due: yield to the event loop so incoming
+      // commands get handled, without the 4 ms setTimeout clamp.
+      yielding ??= new MessageChannel();
+      yielding.port1.onmessage = () => pump();
+      yielding.port2.postMessage(0);
+    }
+  } catch (err) {
+    chain = false;
+    post({ kind: "fatal", message: `The simulator stopped: ${err}` });
   }
 }
 
 function schedule() {
+  if (chain && timer === undefined) return; // waiting on the yield; it will pump
   if (timer !== undefined) clearTimeout(timer);
   timer = undefined;
+  chain = true;
   pump();
 }
 
@@ -151,6 +163,9 @@ function writeFiles(root: string, files: { path: string; data: ArrayBuffer }[]) 
 
 async function start() {
   const url = ctx.name || new URL("pdsim-web.js", self.location.href).href;
+  if (new URL(url, self.location.href).origin !== self.location.origin) {
+    throw new Error("refusing to load a simulator module from another origin");
+  }
   const mod = await import(/* @vite-ignore */ url);
   m = (await mod.default()) as Module;
   for (const dir of PERSISTED) {

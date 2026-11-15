@@ -58,7 +58,17 @@ export async function connect(): Promise<Backend> {
 }
 
 function connectWasm(params: URLSearchParams): Backend {
-  const wasmUrl = params.get("wasm") ?? new URL("pdsim-web.js", document.baseURI).href;
+  // `?wasm=` may point at another build of the module, but only on this
+  // origin: it is run as a script with access to this page's storage.
+  const def = new URL("pdsim-web.js", document.baseURI).href;
+  const asked = params.get("wasm");
+  let wasmUrl = def;
+  if (asked) {
+    try {
+      const u = new URL(asked, document.baseURI);
+      if (u.origin === location.origin) wasmUrl = u.href;
+    } catch { /* ignore a malformed URL */ }
+  }
   // The module's URL travels as the worker's name.
   const worker = new Worker(new URL("./wasm/worker.ts", import.meta.url), { type: "module", name: wasmUrl });
   const listeners: ((e: Event) => void)[] = [];

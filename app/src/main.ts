@@ -1,7 +1,6 @@
 import { connect, type Event } from "./backend";
-import { traceFileName } from "./wasm/files";
 import { hostBehind, type PacingSample } from "./wasm/pacing";
-import { gameName, gamePaths, needsSdk, readKept, sdkPaths, unzipEntries } from "./wasm/files";
+import { gameName, gamePaths, needsSdk, readKept, sdkPaths, traceFileName, unzipEntries } from "./wasm/files";
 import { fromDrop, fromInput, isZip, type Picked } from "./wasm/pick";
 import {
   CATEGORIES, SERIES, MEM_COLORS, MEM_LABELS, buildFlame, drawFlame, drawFrames, drawGauge, drawMemory,
@@ -97,7 +96,7 @@ function open() {
   selected = null;
   flameRoot = null;
   $("log").textContent = "";
-  backend.send({ type: "load", path, calibration: calibInput.value.trim() || null });
+  backend.send({ type: "load", path, calibration: backend.kind === "wasm" ? null : calibInput.value.trim() || null });
 }
 $("open").onclick = open;
 pathInput.onkeydown = (e) => e.key === "Enter" && open();
@@ -195,6 +194,7 @@ function toast(msg: string, error = false, sticky = false) {
   t.textContent = msg;
   t.className = error ? "toast error" : "toast";
   t.style.display = "block";
+  t.onclick = () => (t.style.display = "none");
   clearTimeout((toast as any).timer);
   if (!sticky) (toast as any).timer = setTimeout(() => (t.style.display = "none"), error ? 12000 : 4000);
 }
@@ -385,7 +385,9 @@ function downloadText(name: string, text: string) {
   const a = document.createElement("a");
   a.href = url;
   a.download = name;
+  document.body.append(a);
   a.click();
+  a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
