@@ -1,6 +1,6 @@
 //! [`Cpu`] on Unicorn: a Cortex-M7 in Thumb mode.
 
-use crate::cpu::{Cpu, CpuError, Hooks, Reg};
+use crate::cpu::{Cpu, CpuError, Hooks, Reg, Region};
 use unicorn_engine::unicorn_const::{uc_error, Arch, Mode, Prot};
 use unicorn_engine::{ArmCpuModel, RegisterARM, Unicorn};
 
@@ -54,7 +54,8 @@ fn reg_id(r: Reg) -> i32 {
 }
 
 impl<S: 'static> UnicornCpu<S> {
-    /// A Cortex-M7 with nothing mapped.
+    /// A Cortex-M7 with nothing mapped. The error's `kind` names the step
+    /// that failed (`unicorn: ...` or `cpu model: ...`).
     pub fn new() -> Result<UnicornCpu<S>, CpuError> {
         let ctx = Ctx {
             state: std::ptr::null_mut(),
@@ -62,43 +63,53 @@ impl<S: 'static> UnicornCpu<S> {
         };
         let mut uc =
             Unicorn::new_with_data(Arch::ARM, Mode::THUMB | Mode::MCLASS, ctx).map_err(|e| CpuError {
-                kind: format!("{e:?}"),
+                kind: format!("unicorn: {e:?}"),
                 pc: 0,
             })?;
         uc.ctl_set_cpu_model(ArmCpuModel::CORTEX_M7.into())
-            .map_err(|e| err(&uc, e))?;
+            .map_err(|e| CpuError {
+                kind: format!("cpu model: {e:?}"),
+                pc: 0,
+            })?;
         Ok(UnicornCpu { uc })
     }
 }
 
-fn mem_map<S: 'static>(uc: &mut Uc<'_, S>, addr: u32, size: u32, writable: bool) -> Result<(), CpuError> {
+fn mem_map<S: 'static>(uc: &mut Uc<'_, S>, addr: u32, size: u32, kind: Region) -> Result<(), CpuError> {
     let (begin, end) = (addr as u64, addr as u64 + size as u64 - 1);
-    if writable {
-        uc.mem_map(addr as u64, size as u64, Prot::ALL)
+    match kind {
+        Region::Data => {
+            uc.mem_map(addr as u64, size as u64, Prot::READ | Prot::WRITE)
+                .map_err(|e| err(uc, e))?;
+        }
+        Region::Code => {
+            uc.mem_map(addr as u64, size as u64, Prot::ALL)
+                .map_err(|e| err(uc, e))?;
+            uc.add_block_hook(begin, end, |uc, addr, size| {
+                let Ctx { state, hooks } = *uc.get_data();
+                if let Some(hooks) = hooks {
+                    // SAFETY: `state` and `hooks` were set by `emu_start` from
+                    // references that outlive the emulation they are used in,
+                    // and are restored before it returns.
+                    let (state, hooks) = unsafe { (&mut *state, &*hooks) };
+                    hooks.on_block(&mut InHook(uc), state, addr as u32, size);
+                }
+            })
             .map_err(|e| err(uc, e))?;
-        uc.add_block_hook(begin, end, |uc, addr, size| {
-            let Ctx { state, hooks } = *uc.get_data();
-            if let Some(hooks) = hooks {
-                // SAFETY: `state` and `hooks` were set by `emu_start` from
-                // references that outlive the emulation they are used in,
-                // and are restored before it returns.
-                let (state, hooks) = unsafe { (&mut *state, &*hooks) };
-                hooks.on_block(&mut InHook(uc), state, addr as u32, size);
-            }
-        })
-        .map_err(|e| err(uc, e))?;
-    } else {
-        uc.mem_map(addr as u64, size as u64, Prot::READ | Prot::EXEC)
+        }
+        Region::Trampoline => {
+            uc.mem_map(addr as u64, size as u64, Prot::READ | Prot::EXEC)
+                .map_err(|e| err(uc, e))?;
+            uc.add_code_hook(begin, end, |uc, addr, _| {
+                let Ctx { state, hooks } = *uc.get_data();
+                if let Some(hooks) = hooks {
+                    // SAFETY: as for the block hook.
+                    let (state, hooks) = unsafe { (&mut *state, &*hooks) };
+                    hooks.on_trampoline(&mut InHook(uc), state, addr as u32);
+                }
+            })
             .map_err(|e| err(uc, e))?;
-        uc.add_code_hook(begin, end, |uc, addr, _| {
-            let Ctx { state, hooks } = *uc.get_data();
-            if let Some(hooks) = hooks {
-                // SAFETY: as for the block hook.
-                let (state, hooks) = unsafe { (&mut *state, &*hooks) };
-                hooks.on_trampoline(&mut InHook(uc), state, addr as u32);
-            }
-        })
-        .map_err(|e| err(uc, e))?;
+        }
     }
     Ok(())
 }
@@ -129,9 +140,9 @@ fn emu_start<S: 'static>(
 macro_rules! impl_cpu {
     ($t:ty, $c:ident => $r:expr, $m:expr) => {
         impl<S: 'static> Cpu<S> for $t {
-            fn mem_map(&mut self, addr: u32, size: u32, writable: bool) -> Result<(), CpuError> {
+            fn mem_map(&mut self, addr: u32, size: u32, kind: Region) -> Result<(), CpuError> {
                 let $c = self;
-                mem_map($m, addr, size, writable)
+                mem_map($m, addr, size, kind)
             }
             fn mem_read(&self, addr: u32, buf: &mut [u8]) -> Result<(), CpuError> {
                 let $c = self;
@@ -209,9 +220,9 @@ mod tests {
     #[test]
     fn nested_emu_start_from_a_hook_returns_to_the_outer_run() {
         let mut cpu = UnicornCpu::<St>::new().unwrap();
-        cpu.mem_map(0x1000_0000, 0x1000, true).unwrap();
-        cpu.mem_map(0x2000_0000, 0x1000, false).unwrap();
-        cpu.mem_map(0x3000_0000, 0x1000, true).unwrap();
+        cpu.mem_map(0x1000_0000, 0x1000, Region::Code).unwrap();
+        cpu.mem_map(0x2000_0000, 0x1000, Region::Trampoline).unwrap();
+        cpu.mem_map(0x3000_0000, 0x1000, Region::Data).unwrap();
         // blx r4 ; nop
         cpu.mem_write(0x1000_0000, &[0xa0, 0x47, 0x00, 0xbf]).unwrap();
         // adds r0, #1 ; bx lr
@@ -235,7 +246,7 @@ mod tests {
     #[test]
     fn faults_report_the_unicorn_error_and_pc() {
         let mut cpu = UnicornCpu::<St>::new().unwrap();
-        cpu.mem_map(0x1000_0000, 0x1000, true).unwrap();
+        cpu.mem_map(0x1000_0000, 0x1000, Region::Code).unwrap();
         // ldr r0, [r1]
         cpu.mem_write(0x1000_0000, &[0x08, 0x68, 0x00, 0xbf]).unwrap();
         cpu.reg_write(Reg::R(1), 0x5000_0000);
@@ -244,5 +255,24 @@ mod tests {
             .unwrap_err();
         assert_eq!(e.kind, "READ_UNMAPPED");
         assert_eq!(e.pc, 0x1000_0000);
+    }
+
+    #[test]
+    fn jumping_into_data_memory_is_a_fetch_fault() {
+        let mut cpu = UnicornCpu::<St>::new().unwrap();
+        cpu.mem_map(0x1000_0000, 0x1000, Region::Code).unwrap();
+        cpu.mem_map(0x3000_0000, 0x1000, Region::Data).unwrap();
+        // blx r4
+        cpu.mem_write(0x1000_0000, &[0xa0, 0x47, 0x00, 0xbf]).unwrap();
+        // Valid code in the data region (adds r0, #1 ; bx lr) must not run.
+        cpu.mem_write(0x3000_0000, &[0x01, 0x30, 0x70, 0x47]).unwrap();
+        cpu.reg_write(Reg::R(4), 0x3000_0001);
+        cpu.reg_write(Reg::R(0), 7);
+        let e = cpu
+            .emu_start(0x1000_0001, 0x1000_0002, &mut St::default(), &NestingHooks)
+            .unwrap_err();
+        assert_eq!(e.kind, "FETCH_PROT");
+        assert_eq!(e.pc, 0x3000_0000);
+        assert_eq!(cpu.reg_read(Reg::R(0)), 7);
     }
 }

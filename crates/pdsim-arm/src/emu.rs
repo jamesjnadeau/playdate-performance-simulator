@@ -2,7 +2,7 @@
 
 use crate::abi::{Arg, Machine};
 use crate::cost::{BlockCoster, BlockInfo, Exit};
-use crate::cpu::{Backend, Cpu, CpuError, Hooks, Reg};
+use crate::cpu::{Backend, Cpu, CpuError, Hooks, Reg, Region};
 use crate::elf::{self, Image};
 use crate::heap::Heap;
 use crate::layout::{Kind, Layout, Member, Signature};
@@ -403,7 +403,8 @@ struct ArmHooks;
 impl Hooks<ArmState> for ArmHooks {
     /// Costs a basic block of game code.
     fn on_block(&self, cpu: &mut dyn Cpu<ArmState>, st: &mut ArmState, a: u32, size: u32) {
-        // Only game code is costed (blocks in other writable memory are not).
+        // Only game code is costed (the Code region is rounded up past
+        // `text_end`, and blocks there are not).
         if !(CODE_BASE..=st.image.text_end).contains(&a) {
             return;
         }
@@ -462,7 +463,7 @@ impl Hooks<ArmState> for ArmHooks {
 
     /// An API call: the game jumped to trampoline `(addr - TRAMP_BASE) / 4`.
     fn on_trampoline(&self, cpu: &mut dyn Cpu<ArmState>, st: &mut ArmState, addr: u32) {
-        if addr >= RETURN_ADDR {
+        if !(TRAMP_BASE..RETURN_ADDR).contains(&addr) {
             return;
         }
         let idx = ((addr - TRAMP_BASE) / 4) as usize;
@@ -592,20 +593,23 @@ impl ArmGame {
             class_counts: [0.0; 12],
             registers: 0.0,
         };
-        let mut cpu = backend.build::<ArmState>().map_err(uerr("unicorn"))?;
+        // The backend's error already names the step ("unicorn: ..." or
+        // "cpu model: ...").
+        let mut cpu = backend.build::<ArmState>().map_err(|e| GameError(e.kind))?;
         let code_len = (state.image.bytes.len() as u32).div_ceil(0x10000) * 0x10000;
-        cpu.mem_map(CODE_BASE, code_len.max(0x10000), true)
+        cpu.mem_map(CODE_BASE, code_len.max(0x10000), Region::Code)
             .map_err(uerr("map code"))?;
         cpu.mem_write(CODE_BASE, &state.image.bytes)
             .map_err(uerr("write code"))?;
-        cpu.mem_map(HEAP_BASE, HEAP_SIZE, true)
+        cpu.mem_map(HEAP_BASE, HEAP_SIZE, Region::Data)
             .map_err(uerr("map heap"))?;
-        cpu.mem_map(STACK_BASE, STACK_SIZE, true)
+        cpu.mem_map(STACK_BASE, STACK_SIZE, Region::Data)
             .map_err(uerr("map stack"))?;
-        cpu.mem_map(API_BASE, API_SIZE, true).map_err(uerr("map api"))?;
+        cpu.mem_map(API_BASE, API_SIZE, Region::Data)
+            .map_err(uerr("map api"))?;
         cpu.mem_write(API_BASE, &api_bytes).map_err(uerr("write api"))?;
-        // Read-only memory runs `on_trampoline` for each instruction.
-        cpu.mem_map(TRAMP_BASE, TRAMP_SIZE, false)
+        // `on_trampoline` runs before each instruction here.
+        cpu.mem_map(TRAMP_BASE, TRAMP_SIZE, Region::Trampoline)
             .map_err(uerr("map trampolines"))?;
         let tramp: Vec<u8> = std::iter::repeat_n([0x70u8, 0x47], TRAMP_SIZE as usize / 2)
             .flatten()

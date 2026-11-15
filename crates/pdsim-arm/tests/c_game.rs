@@ -111,6 +111,11 @@ fn costing_is_deterministic() {
 /// recorded on Unicorn before the `Cpu` trait existed (at ea3c424).
 const C_STRESS_FIRST_5_FRAMES: [u64; 5] = [500087, 500020, 500090, 500070, 500084];
 
+/// Checks nesting indirectly, through the cycle totals: a nested call from a
+/// trampoline that failed to restore the outer call would change them. The
+/// direct check (nested `emu_start` returns to the outer run) is the
+/// `nested_emu_start_from_a_hook_returns_to_the_outer_run` unit test in
+/// `unicorn_cpu.rs`.
 #[test]
 fn nested_call_from_trampoline_restores_the_outer_call() {
     // examples/c-stress registers a sprite update function; run 5 frames through the trait and
