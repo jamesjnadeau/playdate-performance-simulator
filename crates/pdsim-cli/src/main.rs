@@ -66,6 +66,8 @@ struct RunArgs {
     #[arg(long)]
     sdk: Option<PathBuf>,
     /// CPU emulator for C games (default: unicorn if built in, else thumb).
+    /// Checked up front for every game: an emulator that is not built in is
+    /// an error (exit 2) even for Lua games.
     #[arg(long, value_parser = ["unicorn", "thumb"])]
     cpu: Option<String>,
     /// Skip per-function attribution (faster).

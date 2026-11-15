@@ -155,9 +155,7 @@ fn run_thread(emit: Box<dyn Fn(Value)>, rx: Receiver<Command>) {
         };
         match rx.recv_timeout(timeout) {
             Ok(c) => {
-                let quit = c == Command::Quit;
-                core.handle(c, now_ms());
-                if quit {
+                if handle_queued(&mut core, c, &rx, &now_ms) {
                     return;
                 }
             }
@@ -165,6 +163,26 @@ fn run_thread(emit: Box<dyn Fn(Value)>, rx: Receiver<Command>) {
             Err(RecvTimeoutError::Disconnected) => return,
         }
     }
+}
+
+/// Handles `first` and every command already queued, so a burst of commands
+/// takes effect before the next frame. Returns true after a `Quit`.
+fn handle_queued(
+    core: &mut SessionCore,
+    first: Command,
+    rx: &Receiver<Command>,
+    now_ms: &dyn Fn() -> f64,
+) -> bool {
+    let mut next = Some(first);
+    while let Some(c) = next {
+        let quit = c == Command::Quit;
+        core.handle(c, now_ms());
+        if quit {
+            return true;
+        }
+        next = rx.try_recv().ok();
+    }
+    false
 }
 
 impl Drop for Session {
@@ -201,6 +219,22 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         None
+    }
+
+    #[test]
+    fn queued_commands_all_apply_before_the_next_frame() {
+        let events = Arc::new(Mutex::new(vec![]));
+        let ev = events.clone();
+        let mut core = SessionCore::new(Box::new(move |v| ev.lock().unwrap().push(v)));
+        let (tx, rx) = channel();
+        tx.send(Command::BreakOnOverBudget { on: true }).unwrap();
+        tx.send(Command::Hello).unwrap();
+        let quit = handle_queued(&mut core, Command::SetMode { mode: "turbo".into() }, &rx, &|| 0.0);
+        assert!(!quit);
+        let evs = events.lock().unwrap();
+        let state = evs.iter().rev().find(|e| e["type"] == "state").expect("state");
+        assert_eq!(state["mode"], "turbo");
+        assert_eq!(state["breakOnOverBudget"], true);
     }
 
     #[test]
