@@ -25,7 +25,11 @@ pub extern "C" fn pdsim_new() {
 #[no_mangle]
 pub unsafe extern "C" fn pdsim_send(ptr: *const u8, len: usize, now_ms: f64) -> i32 {
     // SAFETY: the caller guarantees `ptr..ptr+len` is readable.
-    let json = unsafe { std::slice::from_raw_parts(ptr, len) };
+    let json: &[u8] = if len == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(ptr, len) }
+    };
     INSTANCE.with(|i| i.borrow_mut().send(json, now_ms).is_err()) as i32
 }
 
@@ -43,6 +47,10 @@ pub extern "C" fn pdsim_tick(now_ms: f64) -> f64 {
 #[no_mangle]
 pub unsafe extern "C" fn pdsim_poll(buf: *mut u8, cap: usize) -> usize {
     // SAFETY: the caller guarantees `buf..buf+cap` is writable.
-    let buf = unsafe { std::slice::from_raw_parts_mut(buf, cap) };
+    let buf: &mut [u8] = if cap == 0 {
+        &mut []
+    } else {
+        unsafe { std::slice::from_raw_parts_mut(buf, cap) }
+    };
     INSTANCE.with(|i| i.borrow_mut().poll(buf))
 }

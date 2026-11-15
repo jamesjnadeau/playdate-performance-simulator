@@ -7,7 +7,8 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-type Queue = Rc<RefCell<VecDeque<Vec<u8>>>>;
+/// Encoded events, each tagged with whether it is a `frame`.
+type Queue = Rc<RefCell<VecDeque<(bool, Vec<u8>)>>>;
 
 /// A session plus its outgoing event queue.
 pub struct Instance {
@@ -21,8 +22,25 @@ impl Default for Instance {
     }
 }
 
+/// Frame events carry a whole framebuffer, so only the newest unread one is
+/// kept; every other event type is always queued.
 fn push(queue: &Queue, ev: &Value) {
-    queue.borrow_mut().push_back(ev.to_string().into_bytes());
+    let mut q = queue.borrow_mut();
+    let frame = ev["type"] == "frame";
+    if frame {
+        // The front event may be mid-read by `poll`, so leave it alone.
+        let stale = q
+            .iter()
+            .enumerate()
+            .skip(1)
+            .rev()
+            .find(|(_, e)| e.0)
+            .map(|(i, _)| i);
+        if let Some(i) = stale {
+            q.remove(i);
+        }
+    }
+    q.push_back((frame, ev.to_string().into_bytes()));
 }
 
 impl Instance {
@@ -60,9 +78,9 @@ impl Instance {
     pub fn poll(&mut self, buf: &mut [u8]) -> usize {
         let mut q = self.queue.borrow_mut();
         let Some(front) = q.front() else { return 0 };
-        let n = front.len();
+        let n = front.1.len();
         if n <= buf.len() {
-            buf[..n].copy_from_slice(front);
+            buf[..n].copy_from_slice(&front.1);
             q.pop_front();
         }
         n
@@ -101,10 +119,11 @@ mod tests {
         let load = json!({"type": "load", "path": example(), "dataDir": data.display().to_string()});
         i.send(load.to_string().as_bytes(), 0.0).unwrap();
         i.send(br#"{"type":"setMode","mode":"turbo"}"#, 0.0).unwrap();
+        let mut events = vec![];
         for k in 0..10 {
             assert!(i.tick(k as f64) >= 0.0);
+            events.extend(drain(&mut i));
         }
-        let events = drain(&mut i);
         let count = |t: &str| events.iter().filter(|e| e["type"] == t).count();
         assert_eq!(count("loaded"), 1, "{events:?}");
         assert_eq!(count("frame"), 10);
@@ -139,6 +158,25 @@ mod tests {
         let events = drain(&mut i);
         assert_eq!(events.len(), 2);
         assert!(events.iter().all(|e| e["type"] == "error"));
+    }
+
+    #[test]
+    fn unpolled_frames_are_coalesced_but_other_events_kept() {
+        let q: Queue = Rc::default();
+        push(&q, &json!({"type": "frame", "n": 1}));
+        push(&q, &json!({"type": "error", "message": "x"}));
+        push(&q, &json!({"type": "frame", "n": 2}));
+        push(&q, &json!({"type": "frame", "n": 3}));
+        push(&q, &json!({"type": "state"}));
+        let evs: Vec<Value> = q
+            .borrow()
+            .iter()
+            .map(|b| serde_json::from_slice(&b.1).unwrap())
+            .collect();
+        let kinds: Vec<_> = evs.iter().map(|e| e["type"].as_str().unwrap()).collect();
+        // The oldest frame stays (it may be mid-read); later ones collapse.
+        assert_eq!(kinds, ["frame", "error", "frame", "state"]);
+        assert_eq!(evs[2]["n"], 3);
     }
 
     #[test]
