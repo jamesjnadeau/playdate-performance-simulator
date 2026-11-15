@@ -2,6 +2,7 @@ import { connect, type Event } from "./backend";
 import { hostBehind, type PacingSample } from "./wasm/pacing";
 import { gameName, gamePaths, needsSdk, readKept, sdkPaths, traceFileName, unzipEntries } from "./wasm/files";
 import { fromDrop, fromInput, isZip, type Picked } from "./wasm/pick";
+import { angleDelta, motionToAccel, padButtons, PAD_START, stickAngle } from "./input";
 import {
   CATEGORIES, SERIES, MEM_COLORS, MEM_LABELS, buildFlame, drawFlame, drawFrames, drawGauge, drawMemory,
   type BarLayout, type FlameRect, type FrameLite,
@@ -113,6 +114,11 @@ $<HTMLSelectElement>("mode").onchange = (e) => backend.send({ type: "setMode", m
 $<HTMLInputElement>("break").onchange = (e) => backend.send({ type: "breakOnOverBudget", on: (e.target as HTMLInputElement).checked });
 $("trace").onclick = () => backend.send({ type: "exportTrace" });
 
+const initial = new URLSearchParams(location.search).get("game");
+// The game that was running when the in-browser simulator last died, if any.
+const CRASHED = "pdsim.crashedGame";
+let lastGame = "";
+
 // ---- loading files in the browser (wasm backend only)
 let sdkLoaded = false; // set by the worker's "sdk" event
 if (backend.kind === "wasm") {
@@ -148,7 +154,9 @@ if (backend.kind === "wasm") {
       return;
     }
     pendingGame = null;
-    await send("/game", picked, paths, gameName(picked));
+    localStorageSet(CRASHED, "");
+    lastGame = gameName(picked);
+    await send("/game", picked, paths, lastGame);
     open();
   };
   const loadSdk = async (picked: Picked[]) => {
@@ -226,7 +234,8 @@ window.addEventListener("blur", () => [...held].forEach((b) => button(b, false))
 document.querySelectorAll<HTMLButtonElement>("[data-btn]").forEach((b) => {
   const name = b.dataset.btn!;
   b.onpointerdown = () => button(name, true);
-  b.onpointerup = b.onpointerleave = () => button(name, false);
+  b.onpointerup = b.onpointerleave = b.onpointercancel = () => button(name, false);
+  b.oncontextmenu = (e) => e.preventDefault(); // a long press on a phone
 });
 
 // crank
@@ -269,15 +278,75 @@ crank.onpointermove = (e) => {
   lastDrag = a;
   turn(d);
 };
-crank.onpointerup = () => (dragging = false);
+crank.onpointerup = crank.onpointercancel = () => (dragging = false);
 docked.onchange = () => { backend.send({ type: "dock", docked: docked.checked }); drawCrank(); };
 drawCrank();
-for (const id of ["ax", "ay", "az"]) {
-  $<HTMLInputElement>(id).oninput = () => backend.send({
-    type: "accel",
-    x: Number($<HTMLInputElement>("ax").value), y: Number($<HTMLInputElement>("ay").value), z: Number($<HTMLInputElement>("az").value),
-  });
+const sendAccel = () => backend.send({
+  type: "accel",
+  x: Number($<HTMLInputElement>("ax").value), y: Number($<HTMLInputElement>("ay").value), z: Number($<HTMLInputElement>("az").value),
+});
+for (const id of ["ax", "ay", "az"]) $<HTMLInputElement>(id).oninput = sendAccel;
+
+// Tilting a phone drives the accelerometer sliders.
+const tilt = $<HTMLInputElement>("tilt");
+if ("DeviceMotionEvent" in window && navigator.maxTouchPoints > 0) $("tiltLabel").hidden = false;
+const onMotion = (e: DeviceMotionEvent) => {
+  const g = e.accelerationIncludingGravity;
+  const a = g && motionToAccel(g);
+  if (!a) return;
+  const [x, y, z] = ["ax", "ay", "az"].map((id) => $<HTMLInputElement>(id));
+  if (Number(x.value) === a.x && Number(y.value) === a.y && Number(z.value) === a.z) return;
+  x.value = String(a.x); y.value = String(a.y); z.value = String(a.z);
+  sendAccel();
+};
+tilt.onchange = async () => {
+  window.removeEventListener("devicemotion", onMotion);
+  if (!tilt.checked) return;
+  // iOS asks for permission, and only from a tap.
+  const ask = (DeviceMotionEvent as any).requestPermission as (() => Promise<string>) | undefined;
+  if (ask) {
+    const answer = await ask().catch(() => "denied");
+    if (answer !== "granted") { tilt.checked = false; toast("Motion access was not allowed.", true); return; }
+  }
+  window.addEventListener("devicemotion", onMotion);
+};
+
+// Gamepads, polled once per animation frame while any is connected.
+const padHeld = new Set<string>();
+let padStart = false;
+let padPolling = false;
+function pollPads() {
+  const pads = [...navigator.getGamepads()].filter((p): p is Gamepad => p !== null && p.connected);
+  if (pads.length === 0) {
+    for (const b of padHeld) button(b, false);
+    padHeld.clear();
+    padPolling = false;
+    return;
+  }
+  const now = new Set<string>();
+  let start = false;
+  let angle: number | null = null;
+  for (const p of pads) {
+    for (const b of padButtons(p)) now.add(b);
+    start ||= !!p.buttons[PAD_START]?.pressed;
+    angle ??= stickAngle(p);
+  }
+  for (const b of padHeld) if (!now.has(b)) button(b, false);
+  for (const b of now) if (!padHeld.has(b)) button(b, true);
+  padHeld.clear();
+  for (const b of now) padHeld.add(b);
+  if (start && !padStart) togglePlay();
+  padStart = start;
+  if (angle !== null) {
+    const d = angleDelta(crankAngle, angle);
+    if (Math.abs(d) >= 0.5) turn(d);
+  }
+  requestAnimationFrame(pollPads);
 }
+window.addEventListener("gamepadconnected", (e) => {
+  toast(`Gamepad connected: ${(e as GamepadEvent).gamepad.id}`);
+  if (!padPolling) { padPolling = true; requestAnimationFrame(pollPads); }
+});
 
 // ---- charts
 const framesCanvas = $<HTMLCanvasElement>("frames");
@@ -488,7 +557,20 @@ backend.onEvent((e) => {
       downloadText(traceFileName(e.frame), JSON.stringify(e.trace));
       toast(`Trace of ${e.frames} frames downloaded as ${traceFileName(e.frame)}\nOpen it in ui.perfetto.dev or chrome://tracing.`);
       break;
+    case "restored":
+      lastGame = e.name;
+      // The last game is back in the worker's filesystem: reopen it, unless
+      // it stopped the simulator last time (then a reload would just repeat that).
+      if (initial) break;
+      if (localStorageGet(CRASHED) === e.name) {
+        localStorageSet(CRASHED, "");
+        toast(`Not reopening ${e.name}: it stopped the simulator last time. Drop it again to retry.`, true);
+        break;
+      }
+      open();
+      break;
     case "error":
+      if (e.fatal && backend.kind === "wasm") localStorageSet(CRASHED, lastGame);
       if (e.message.includes("Load your SDK folder")) $("sdkBtn").classList.add("needed");
       toast(e.message, true, !!e.fatal); // a fatal startup failure stays up
       if (e.fatal) $("log").textContent += e.message + "\n";
@@ -497,6 +579,5 @@ backend.onEvent((e) => {
 });
 
 redrawCharts();
-const initial = new URLSearchParams(location.search).get("game");
 if (initial) { pathInput.value = initial; open(); }
 backend.send({ type: "hello" });

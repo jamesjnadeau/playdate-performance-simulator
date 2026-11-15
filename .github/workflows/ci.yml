@@ -89,7 +89,5 @@ jobs:
           npm ci
           npm test
           npm run build:web
-      - name: wasm size
-        run: |
-          ls -l app/dist/pdsim_web.wasm
-          echo "gzipped: $(gzip -9 -c app/dist/pdsim_web.wasm | wc -c) bytes"
+      - name: wasm size budget
+        run: scripts/wasm-size.sh app/dist/pdsim_web.wasm

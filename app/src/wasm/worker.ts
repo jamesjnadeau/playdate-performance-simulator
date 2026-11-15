@@ -17,6 +17,7 @@ type Module = {
   FS: {
     mkdirTree(p: string): void;
     writeFile(p: string, data: Uint8Array): void;
+    readFile(p: string, opts: { encoding: "utf8" }): string;
     readdir(p: string): string[];
     stat(p: string): { mode: number };
     isDir(mode: number): boolean;
@@ -47,12 +48,16 @@ let running = false;
 let syncing = false;
 let gameName = "game";
 
-// Save data (/data) and the SDK (/sdk) live in IndexedDB between visits.
-const PERSISTED = ["/data", "/sdk"];
+// Save data (/data), the SDK (/sdk) and the last game (/game) live in
+// IndexedDB between visits, so a reload goes straight back in.
+const PERSISTED = ["/data", "/sdk", "/game"];
+// The last game's folder name (its save folder); a dot-name can't be a game's.
+const LAST_GAME = "/data/.last-game";
 const SYNC_MS = 1000;
 
 let syncAgain = false;
 const haveSdk = () => m.FS.analyzePath("/sdk/C_API").exists || m.FS.analyzePath("/sdk/CoreLibs").exists;
+const hasFiles = (dir: string) => m.FS.readdir(dir).some((n) => n !== "." && n !== "..");
 const announceSdk = () => post({ kind: "event", event: { type: "sdk", loaded: haveSdk() } });
 
 function syncOut() {
@@ -174,12 +179,15 @@ async function start() {
   }
   await new Promise<void>((resolve, reject) => m.FS.syncfs(true, (err) => (err ? reject(err) : resolve())));
   announceSdk();
+  const restored = hasFiles("/game");
+  if (restored) gameName = m.FS.analyzePath(LAST_GAME).exists ? m.FS.readFile(LAST_GAME, { encoding: "utf8" }) : "game";
   setInterval(() => {
     if (running) syncOut();
   }, SYNC_MS);
   m._pdsim_new();
   buf.ptr = m._malloc(buf.cap);
   post({ kind: "ready" });
+  if (restored) post({ kind: "event", event: { type: "restored", name: gameName } });
 }
 
 const ready = start().catch((err) => post({ kind: "fatal", message: `Failed to load the simulator: ${err}` }));
@@ -191,11 +199,11 @@ ctx.onmessage = async (e) => {
     const msg = e.data;
     if (msg.kind === "files") {
       writeFiles(msg.root, msg.files);
-      if (msg.root === "/game") gameName = msg.name ?? "game";
-      else {
-        announceSdk();
-        syncOut();
-      }
+      if (msg.root === "/game") {
+        gameName = msg.name ?? "game";
+        m.FS.writeFile(LAST_GAME, encoder.encode(gameName));
+      } else announceSdk();
+      syncOut();
     } else {
       send(withHostPaths(msg.cmd, gameName, haveSdk()));
       schedule();
