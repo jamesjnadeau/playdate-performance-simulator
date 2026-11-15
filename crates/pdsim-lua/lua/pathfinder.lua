@@ -168,3 +168,4 @@ function Node:removeAllConnections(reciprocal)
 	self._conns, self._weights = {}, {}
 end
 function Node:setXY(x, y) self.x, self.y = x, y end
+pd.native(Graph, Node)

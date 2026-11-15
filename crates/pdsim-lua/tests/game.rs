@@ -284,6 +284,46 @@ fn sprite_draw_runs_only_without_an_image() {
 }
 
 #[test]
+fn api_objects_are_userdata_like_on_device() {
+    let t = TempGame::new(
+        "types",
+        r#"
+        import "CoreLibs/object"
+        import "CoreLibs/sprites"
+        local gfx = playdate.graphics
+        local geo = playdate.geometry
+        class("Thing").extends(gfx.sprite)
+        class("Plain").extends()
+        function Thing:init(img) Thing.super.init(self, img) end
+        -- What NobleSprite:init does to tell an image from an animation.
+        local function kind(v)
+            if type(v) == "userdata" then return "image" elseif type(v) == "table" then return "animation" end
+        end
+        local userdata = {
+            gfx.image.new(1, 1), gfx.sprite.new(), Thing(gfx.image.new(1, 1)),
+            gfx.imagetable.new(2), geo.rect.new(0, 0, 1, 1), geo.point.new(0, 0),
+            geo.vector2D.new(1, 0), geo.polygon.new(0, 0, 1, 1), gfx.getSystemFont(),
+            playdate.getSystemMenu(), playdate.pathfinder.graph.new(),
+        }
+        bad = {}
+        for i, v in ipairs(userdata) do
+            if type(v) ~= "userdata" then bad[#bad + 1] = "userdata #" .. i .. " is " .. type(v) end
+        end
+        for name, v in pairs({Thing = Thing, Plain = Plain, plainObj = Plain(), sprite = gfx.sprite, tbl = {}}) do
+            if type(v) ~= "table" then bad[#bad + 1] = name .. " is " .. type(v) end
+        end
+        if type(1) ~= "number" or type("s") ~= "string" or type(nil) ~= "nil" then bad[#bad + 1] = "primitives" end
+        if kind(gfx.image.new(1, 1)) ~= "image" then bad[#bad + 1] = "image is not an image" end
+        bad = table.concat(bad, ", ")
+        function playdate.update() end
+        "#,
+    );
+    let mut g = t.load();
+    run(&mut g, 1);
+    assert_eq!(g.lua().globals().get::<String>("bad").unwrap(), "");
+}
+
+#[test]
 fn image_draw_anchored_and_centered() {
     let t = TempGame::new(
         "anchored",

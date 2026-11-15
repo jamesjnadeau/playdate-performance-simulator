@@ -1360,3 +1360,27 @@ function print(...)
 	pd.log(table.concat(out, "\t"))
 end
 P.debugDraw = nil
+
+-- On device, API objects (images, sprites, rects, files, ...) are userdata, and
+-- games branch on it (Noble's NobleSprite tells an image from an animation by
+-- `type(x) == "userdata"`). Here they are tables, so report them as userdata.
+-- Classes made with class() and sprite subclasses' class tables stay "table".
+local nativeMeta = {}
+function pd.native(...)
+	for i = 1, select("#", ...) do
+		local c = select(i, ...)
+		if c then nativeMeta[c] = true end
+	end
+end
+pd.native(ImageTable, NineSlice, Tilemap, Menu, MenuItem, File)
+for _, n in ipairs({"point", "vector2D", "rect", "size", "lineSegment", "affineTransform", "polygon", "arc"}) do
+	pd.native(geom[n])
+end
+for _, c in pairs(P.sound) do
+	if type(c) == "table" and rawget(c, "new") then pd.native(c) end
+end
+function _G.type(v)
+	local t = type(v)
+	if t == "table" and (rawget(v, "__pd") ~= nil or nativeMeta[getmetatable(v)]) then return "userdata" end
+	return t
+end
