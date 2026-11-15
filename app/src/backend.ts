@@ -11,8 +11,12 @@ export interface Backend {
   kind: "tauri" | "websocket" | "wasm";
   send(cmd: Command): void;
   onEvent(cb: (e: Event) => void): void;
-  /** Put game or SDK files into the in-browser simulator's filesystem. */
-  loadFiles?(root: "/game" | "/sdk", files: { path: string; data: ArrayBuffer }[]): void;
+  /**
+   * Put game or SDK files into the in-browser simulator's filesystem. This
+   * replaces everything under `root`, and transfers (detaches) the passed
+   * ArrayBuffers. `name` is the game's folder name, used for its save data.
+   */
+  loadFiles?(root: "/game" | "/sdk", files: { path: string; data: ArrayBuffer }[], name?: string): void;
 }
 
 export async function connect(): Promise<Backend> {
@@ -80,6 +84,7 @@ function connectWasm(params: URLSearchParams): Backend {
     kind: "wasm",
     send: (cmd) => whenReady(() => post({ kind: "cmd", cmd })),
     onEvent: (cb) => void listeners.push(cb),
-    loadFiles: (root, files) => whenReady(() => post({ kind: "files", root, files }, files.map((f) => f.data))),
+    loadFiles: (root, files, name) =>
+      whenReady(() => post({ kind: "files", root, files, name }, files.map((f) => f.data))),
   };
 }

@@ -6,7 +6,7 @@ export type WasmFile = { path: string; data: ArrayBuffer };
 
 export type ToWorker =
   | { kind: "cmd"; cmd: Command }
-  | { kind: "files"; root: FileRoot; files: WasmFile[] };
+  | { kind: "files"; root: FileRoot; files: WasmFile[]; name?: string };
 
 export type FromWorker =
   | { kind: "ready" }

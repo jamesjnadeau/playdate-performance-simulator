@@ -1,4 +1,6 @@
 import { connect, type Event } from "./backend";
+import { gameName, gamePaths, sdkPaths, unzipEntries } from "./wasm/files";
+import { fromDrop, fromInput, isZip, type Picked } from "./wasm/pick";
 import {
   CATEGORIES, SERIES, MEM_COLORS, MEM_LABELS, buildFlame, drawFlame, drawFrames, drawGauge, drawMemory,
   type BarLayout, type FlameRect, type FrameLite,
@@ -85,9 +87,9 @@ pathInput.value = localStorageGet("pdsim.path") ?? "";
 const calibInput = $<HTMLInputElement>("calibPath");
 calibInput.value = localStorageGet("pdsim.calibration") ?? "";
 function open() {
-  const path = pathInput.value.trim();
+  const path = backend.kind === "wasm" ? "/game" : pathInput.value.trim();
   if (!path) return;
-  localStorageSet("pdsim.path", path);
+  if (backend.kind !== "wasm") localStorageSet("pdsim.path", path);
   localStorageSet("pdsim.calibration", calibInput.value.trim());
   frames.length = 0;
   selected = null;
@@ -105,6 +107,56 @@ $("step").onclick = () => backend.send({ type: "step" });
 $<HTMLSelectElement>("mode").onchange = (e) => backend.send({ type: "setMode", mode: (e.target as HTMLSelectElement).value });
 $<HTMLInputElement>("break").onchange = (e) => backend.send({ type: "breakOnOverBudget", on: (e.target as HTMLInputElement).checked });
 $("trace").onclick = () => backend.send({ type: "exportTrace" });
+
+// ---- loading files in the browser (wasm backend only)
+if (backend.kind === "wasm") {
+  for (const id of ["path", "calibPath", "open"]) $(id).hidden = true;
+  for (const id of ["dropzone", "sdkBtn", "sdkStatus"]) $(id).hidden = false;
+  const folderInput = $<HTMLInputElement>("folderInput");
+  const zipInput = $<HTMLInputElement>("zipInput");
+  const sdkInput = $<HTMLInputElement>("sdkInput");
+  const zone = $("dropzone");
+
+  const send = (root: "/game" | "/sdk", picked: Picked[], paths: Map<string, string>, name?: string) => {
+    const prefix = root + "/";
+    const files = picked.filter((p) => paths.has(p.path)).map((p) => ({ path: paths.get(p.path)!.slice(prefix.length), data: p.data }));
+    backend.loadFiles!(root, files, name);
+    return files.length;
+  };
+  const loadGame = (picked: Picked[]) => {
+    if (isZip(picked)) {
+      try { picked = unzipEntries(new Uint8Array(picked[0].data)); }
+      catch (err) { toast(`Could not read the zip: ${err}`, true); return; }
+    }
+    const paths = gamePaths(picked);
+    if (paths.size === 0) { toast("No game files found.", true); return; }
+    send("/game", picked, paths, gameName(picked));
+    open();
+  };
+  const loadSdk = (picked: Picked[]) => {
+    const paths = sdkPaths(picked);
+    if (paths.size === 0) { toast("That folder has no C_API or CoreLibs; pick the PlaydateSDK folder.", true); return; }
+    const n = send("/sdk", picked, paths);
+    toast(`Loaded ${n} SDK files.`);
+  };
+  const guard = (f: () => Promise<void>) => f().catch((err) => toast(`Could not read the files: ${err}`, true));
+
+  $("openFolder").onclick = (e) => { e.stopPropagation(); folderInput.click(); };
+  zone.onclick = () => zipInput.click();
+  folderInput.onchange = () => folderInput.files && guard(async () => loadGame(await fromInput(folderInput.files!)));
+  zipInput.onchange = () => zipInput.files && guard(async () => loadGame(await fromInput(zipInput.files!)));
+  $("sdkBtn").onclick = () => sdkInput.click();
+  sdkInput.onchange = () => sdkInput.files && guard(async () => loadSdk(await fromInput(sdkInput.files!)));
+  for (const t of ["dragenter", "dragover"]) {
+    window.addEventListener(t, (e) => { e.preventDefault(); zone.classList.add("over"); });
+  }
+  window.addEventListener("dragleave", () => zone.classList.remove("over"));
+  window.addEventListener("drop", (e) => {
+    e.preventDefault();
+    zone.classList.remove("over");
+    if (e.dataTransfer) guard(async () => loadGame(await fromDrop(e.dataTransfer!)));
+  });
+}
 
 function localStorageGet(k: string): string | null {
   try { return localStorage.getItem(k); } catch { return null; }
@@ -334,6 +386,9 @@ backend.onEvent((e) => {
       $("calib").textContent = e.calibration;
       $("calib").classList.toggle("est", e.estimated);
       toast(e.description);
+      break;
+    case "sdk":
+      $("sdkStatus").textContent = e.loaded ? "SDK: loaded" : "SDK: none (using built-in CoreLibs stand-ins)";
       break;
     case "log": {
       const log = $("log");

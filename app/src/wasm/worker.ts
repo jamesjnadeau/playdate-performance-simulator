@@ -3,6 +3,7 @@
 // The URL of pdsim-web.js arrives as the worker's `name`.
 import type { Command } from "../backend";
 import { delayFor, drainEvents } from "./events";
+import { withHostPaths } from "./files";
 import type { FromWorker, ToWorker } from "./protocol";
 
 type Module = {
@@ -21,6 +22,10 @@ type Module = {
     isDir(mode: number): boolean;
     unlink(p: string): void;
     rmdir(p: string): void;
+    mount(type: unknown, opts: object, mountpoint: string): void;
+    syncfs(populate: boolean, cb: (err?: unknown) => void): void;
+    analyzePath(p: string): { exists: boolean };
+    filesystems: { IDBFS: unknown };
   };
 };
 
@@ -38,6 +43,33 @@ let m: Module;
 const buf = { ptr: 0, cap: 64 * 1024 };
 let timer: ReturnType<typeof setTimeout> | undefined;
 let yielding: MessageChannel | undefined;
+let running = false;
+let syncing = false;
+let gameName = "game";
+
+// Save data (/data) and the SDK (/sdk) live in IndexedDB between visits.
+const PERSISTED = ["/data", "/sdk"];
+const SYNC_MS = 1000;
+
+let syncAgain = false;
+const haveSdk = () => m.FS.analyzePath("/sdk/C_API").exists;
+const announceSdk = () => post({ kind: "event", event: { type: "sdk", loaded: haveSdk() } });
+
+function syncOut() {
+  if (syncing) {
+    syncAgain = true;
+    return;
+  }
+  syncing = true;
+  m.FS.syncfs(false, (err) => {
+    syncing = false;
+    if (err) console.warn("Could not save to IndexedDB:", err);
+    if (syncAgain) {
+      syncAgain = false;
+      syncOut();
+    }
+  });
+}
 
 function flush() {
   const events = drainEvents(
@@ -47,7 +79,10 @@ function flush() {
     (n) => m._malloc(n),
     (p) => m._free(p),
   );
-  for (const event of events) post({ kind: "event", event });
+  for (const event of events) {
+    if (event.type === "state") running = !!event.running;
+    post({ kind: "event", event });
+  }
 }
 
 function pump() {
@@ -86,6 +121,8 @@ function send(cmd: Command) {
   m._free(p);
 }
 
+// Empties a directory but never removes `dir` itself, so an IDBFS mount point
+// stays mounted.
 function clearDir(dir: string) {
   for (const name of m.FS.readdir(dir)) {
     if (name === "." || name === "..") continue;
@@ -112,6 +149,15 @@ async function start() {
   const url = ctx.name || new URL("/pdsim-web.js", self.location.origin).href;
   const mod = await import(/* @vite-ignore */ url);
   m = (await mod.default()) as Module;
+  for (const dir of PERSISTED) {
+    m.FS.mkdirTree(dir);
+    m.FS.mount(m.FS.filesystems.IDBFS, {}, dir);
+  }
+  await new Promise<void>((resolve, reject) => m.FS.syncfs(true, (err) => (err ? reject(err) : resolve())));
+  announceSdk();
+  setInterval(() => {
+    if (running) syncOut();
+  }, SYNC_MS);
   m._pdsim_new();
   buf.ptr = m._malloc(buf.cap);
   post({ kind: "ready" });
@@ -124,9 +170,16 @@ ctx.onmessage = async (e) => {
   if (!m) return;
   try {
     const msg = e.data;
-    if (msg.kind === "files") writeFiles(msg.root, msg.files);
-    else {
-      send(msg.cmd);
+    if (msg.kind === "files") {
+      writeFiles(msg.root, msg.files);
+      if (msg.root === "/game") gameName = msg.name ?? "game";
+      else {
+        announceSdk();
+        syncOut();
+      }
+    } else {
+      send(withHostPaths(msg.cmd, gameName, haveSdk()));
+      if (msg.cmd.type === "pause") syncOut();
       schedule();
     }
   } catch (err) {
