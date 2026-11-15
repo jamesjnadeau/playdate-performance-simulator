@@ -1,9 +1,9 @@
 # Builds corpus_<seed>.elf for each seed in SEEDS: corpus.c plus the
 # functions gen.py writes to gen_<seed>.c, compiled for the device the same
 # way examples/c-stress is (the SDK's common.mk).
-#   make SEEDS="0 1 2 3"   (needs PLAYDATE_SDK_PATH and arm-none-eabi-gcc)
+#   make SEEDS="0 1 2 3 18"   (needs PLAYDATE_SDK_PATH and arm-none-eabi-gcc)
 # crates/pdsim-arm/tests/lockstep.rs runs the ELFs on both backends.
-SEEDS ?= 0 1 2 3
+SEEDS ?= 0 1 2 3 18
 COUNT ?= 200
 
 HEAP_SIZE      = 8388208

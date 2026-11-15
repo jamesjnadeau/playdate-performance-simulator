@@ -11,7 +11,9 @@
 //! The ELFs are built outside the test (each test skips with a message
 //! when its ELF or the SDK is missing):
 //! - `make -C examples/c-stress device_bin`, `make -C calibration/bench-c device_bin`
-//! - `make -C tests/thumb-corpus SEEDS="0 1 2 3"`
+//! - `make -C tests/thumb-corpus` (builds [`SEEDS`])
+//!
+//! With `PDSIM_REQUIRE_ELFS=1`, a missing ELF or SDK fails the test instead.
 
 use capstone::arch::arm::{ArchExtraMode, ArchMode};
 use capstone::prelude::*;
@@ -27,6 +29,10 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use Backend::{Thumb, Unicorn};
+
+/// The corpus seeds checked; must match the Makefile's default `SEEDS`.
+/// Seed 18 is the one that exposed Unicorn's write-hook IT-state leak.
+const SEEDS: [u32; 5] = [0, 1, 2, 3, 18];
 
 /// Every register a snapshot holds.
 fn regs() -> Vec<Reg> {
@@ -59,7 +65,7 @@ pub struct Divergence {
     /// A differing store, or memory range: address, Unicorn's bytes, then
     /// the interpreter's.
     pub write: Option<(u32, Vec<u8>, Vec<u8>)>,
-    /// What differs, then Capstone disassembly of ten instructions from `pc`.
+    /// What differs, then Capstone disassembly of the whole block at `pc`.
     pub disasm: String,
 }
 
@@ -90,18 +96,25 @@ fn corpus_elf(seed: u32) -> PathBuf {
 
 fn all_elfs() -> Vec<PathBuf> {
     let mut v = vec![elf("examples/c-stress"), elf("calibration/bench-c")];
-    v.extend((0..4).map(corpus_elf));
+    v.extend(SEEDS.map(corpus_elf));
     v
 }
 
-/// The SDK and whether `elf` exists; prints why a test is skipped.
+/// The SDK and whether `elf` exists; prints why a test is skipped, or
+/// fails under `PDSIM_REQUIRE_ELFS=1`.
 fn ready(elf: &Path) -> Option<PathBuf> {
+    let skip = |why: String| {
+        if std::env::var("PDSIM_REQUIRE_ELFS").is_ok_and(|v| v == "1") {
+            panic!("{why} (PDSIM_REQUIRE_ELFS=1)");
+        }
+        eprintln!("{why}; skipping");
+    };
     let Some(sdk) = Device::sdk_from_env() else {
-        eprintln!("PLAYDATE_SDK_PATH not set; skipping");
+        skip("PLAYDATE_SDK_PATH not set".into());
         return None;
     };
     if !elf.exists() {
-        eprintln!("{} not built; skipping", elf.display());
+        skip(format!("{} not built", elf.display()));
         return None;
     }
     Some(sdk)
@@ -141,17 +154,17 @@ fn record(g: &mut ArmGame) -> Snaps {
     snaps
 }
 
-/// Ten instructions from `pc`, from `g`'s memory.
-fn disasm(g: &mut ArmGame, pc: u32) -> String {
+/// The `size`-byte block at `pc`, from `g`'s memory.
+fn disasm(g: &mut ArmGame, pc: u32, size: u32) -> String {
     let cs = Capstone::new()
         .arm()
         .mode(ArchMode::Thumb)
         .extra_mode([ArchExtraMode::MClass].iter().copied())
         .build()
         .expect("capstone");
-    let code = g.cpu().bytes(pc, 40);
+    let code = g.cpu().bytes(pc, size as usize);
     let mut out = String::new();
-    match cs.disasm_count(&code, pc as u64, 10) {
+    match cs.disasm_all(&code, pc as u64) {
         Ok(insns) => {
             for i in insns.iter() {
                 let bytes: String = i.bytes().iter().map(|b| format!("{b:02x}")).collect();
@@ -257,6 +270,7 @@ fn lockstep(elf: &Path, frames: u32) -> Result<(), Divergence> {
     let st = record(&mut t);
     let mut block = 0u32;
     let mut last_pc = 0u32;
+    let mut last_size = 0u32;
     for frame in 0..frames {
         let ru = u.frame(None).map(|_| ()).map_err(|e| e.0);
         let rt = t.frame(None).map(|_| ()).map_err(|e| e.0);
@@ -277,7 +291,7 @@ fn lockstep(elf: &Path, frames: u32) -> Result<(), Divergence> {
         for (a, b) in vu.iter().zip(&vt) {
             if let Some((reg, write, what)) = diff_snap(a, b) {
                 let mut disasm = format!("  frame {frame}\n{what}");
-                disasm += &disasm_of(&mut u, last_pc);
+                disasm += &disasm_of(&mut u, last_pc, last_size);
                 return Err(Divergence {
                     block,
                     pc: last_pc,
@@ -287,6 +301,7 @@ fn lockstep(elf: &Path, frames: u32) -> Result<(), Divergence> {
                 });
             }
             last_pc = a.addr;
+            last_size = a.size;
             block += 1;
         }
         if vu.len() != vt.len() || ru != rt {
@@ -300,7 +315,7 @@ fn lockstep(elf: &Path, frames: u32) -> Result<(), Divergence> {
                 pc: last_pc,
                 reg: None,
                 write: None,
-                disasm: what + &disasm_of(&mut u, last_pc),
+                disasm: what + &disasm_of(&mut u, last_pc, last_size),
             });
         }
         if ru.is_err() {
@@ -313,24 +328,33 @@ fn lockstep(elf: &Path, frames: u32) -> Result<(), Divergence> {
     Ok(())
 }
 
-fn disasm_of(g: &mut ArmGame, pc: u32) -> String {
+/// The block that ran last (`pc`, `size` bytes), which holds the
+/// divergent instruction.
+fn disasm_of(g: &mut ArmGame, pc: u32, size: u32) -> String {
     if pc == 0 || pc == u32::MAX {
         String::new()
     } else {
-        disasm(g, pc)
+        disasm(g, pc, size)
     }
 }
 
-/// `(addr, size)` of every block `on_block` sees in `frames` frames.
-fn block_trace(elf: &Path, frames: u32, backend: Backend) -> Vec<(u32, u32)> {
+/// `(addr, size)` of every block `on_block` sees in `frames` frames. With
+/// `recording` off the write log is off too, so Unicorn runs without its
+/// memory write hook, as it does when making reports.
+fn block_trace(elf: &Path, frames: u32, backend: Backend, recording: bool) -> Vec<(u32, u32)> {
     let Some(sdk) = ready(elf) else { return vec![] };
     let mut g = load(elf, &sdk, backend);
     let trace: Rc<RefCell<Vec<(u32, u32)>>> = Rc::default();
     let out = trace.clone();
     g.set_block_probe(Box::new(move |cpu: &mut dyn Cpu<ArmState>, a, s| {
-        cpu.write_log();
+        if recording {
+            cpu.write_log();
+        }
         out.borrow_mut().push((a, s));
     }));
+    if !recording {
+        g.cpu().set_write_log(false);
+    }
     for _ in 0..frames {
         if g.frame(None).is_err() {
             break;
@@ -357,7 +381,7 @@ fn lockstep_bench_c() {
 
 #[test]
 fn lockstep_corpus() {
-    for seed in 0..4 {
+    for seed in SEEDS {
         check(lockstep(&corpus_elf(seed), 3))
     }
 }
@@ -365,25 +389,38 @@ fn lockstep_corpus() {
 #[test]
 fn block_trace_matches_unicorn() {
     for e in all_elfs() {
-        let (u, t) = (block_trace(&e, 30, Unicorn), block_trace(&e, 30, Thumb));
-        if u != t {
-            let i = (0..u.len().max(t.len())).find(|&i| u.get(i) != t.get(i)).unwrap();
-            panic!(
-                "{}: block {i} of {} / {}: unicorn {:x?}, thumb {:x?}",
-                e.display(),
-                u.len(),
-                t.len(),
-                u.get(i),
-                t.get(i)
-            );
-        }
+        let u = block_trace(&e, 30, Unicorn, false);
+        let t = block_trace(&e, 30, Thumb, false);
+        same_trace(&e, ("unicorn", &u), ("thumb", &t));
+    }
+}
+
+/// Panics at the first block where the two traces differ.
+fn same_trace(e: &Path, (na, a): (&str, &[(u32, u32)]), (nb, b): (&str, &[(u32, u32)])) {
+    if a != b {
+        let i = (0..a.len().max(b.len())).find(|&i| a.get(i) != b.get(i)).unwrap();
+        panic!(
+            "{}: block {i} of {} / {}: {na} {:x?}, {nb} {:x?}",
+            e.display(),
+            a.len(),
+            b.len(),
+            a.get(i),
+            b.get(i)
+        );
     }
 }
 
 /// Recording (on Unicorn, a memory write hook) changes neither the blocks
-/// nor their costs, so the traces above are the ones reports are made of.
+/// nor their costs, so the lockstep runs check what reports are made of.
 #[test]
 fn recording_does_not_change_costing() {
+    for e in all_elfs() {
+        for b in [Unicorn, Thumb] {
+            let plain = block_trace(&e, 30, b, false);
+            let recorded = block_trace(&e, 30, b, true);
+            same_trace(&e, (&format!("{b:?} plain"), &plain), ("recorded", &recorded));
+        }
+    }
     let e = elf("examples/c-stress");
     let Some(sdk) = ready(&e) else { return };
     for b in [Unicorn, Thumb] {
