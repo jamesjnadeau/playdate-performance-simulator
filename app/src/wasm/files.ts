@@ -7,6 +7,23 @@ const segments = (p: string) => p.split("/").filter((s) => s !== "");
 
 const isJunk = (segs: string[]) => segs[0] === "__MACOSX" || segs.some((s) => s.startsWith("."));
 
+/** Whether a directory is worth descending into when listing a dropped folder. */
+export const wantsDir = (name: string) => name !== "__MACOSX" && !name.startsWith(".");
+
+/** Read only the entries that have a destination (paths decided before any bytes are read). */
+export async function readKept<T extends { path: string }>(
+  entries: T[],
+  paths: Map<string, string>,
+  read: (e: T) => Promise<ArrayBuffer>,
+): Promise<{ path: string; dest: string; data: ArrayBuffer }[]> {
+  const out: { path: string; dest: string; data: ArrayBuffer }[] = [];
+  for (const e of entries) {
+    const dest = paths.get(e.path);
+    if (dest !== undefined) out.push({ path: e.path, dest, data: await read(e) });
+  }
+  return out;
+}
+
 /** Drop junk and return each surviving entry's path segments. */
 function usable(entries: { path: string }[]): { path: string; segs: string[] }[] {
   return entries.map((e) => ({ path: e.path, segs: segments(e.path) })).filter((e) => e.segs.length > 0 && !isJunk(e.segs));

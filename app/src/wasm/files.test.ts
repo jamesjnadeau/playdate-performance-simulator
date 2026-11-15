@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { gameName, gamePaths, sdkPaths, unzipEntries, withHostPaths } from "./files";
+import { readKept, wantsDir, gameName, gamePaths, sdkPaths, unzipEntries, withHostPaths } from "./files";
 import { zipSync } from "fflate";
 
 const e = (...paths: string[]) => paths.map((path) => ({ path }));
@@ -68,4 +68,18 @@ test("unzipEntries skips directories", () => {
   const out = unzipEntries(zip);
   expect(out.map((x) => x.path)).toEqual(["g/main.lua"]);
   expect(new Uint8Array(out[0].data)).toEqual(new Uint8Array([1, 2, 3]));
+});
+
+test("wantsDir skips dot-folders and __MACOSX", () => {
+  expect(wantsDir(".git")).toBe(false);
+  expect(wantsDir("__MACOSX")).toBe(false);
+  expect(wantsDir("img")).toBe(true);
+});
+
+test("readKept reads only entries that have a destination", async () => {
+  const read: string[] = [];
+  const entries = e("sdk/bin/pdc", "sdk/CoreLibs/a.lua", "sdk/C_API/b.h");
+  const out = await readKept(entries, sdkPaths(entries), async (x) => (read.push(x.path), new ArrayBuffer(0)));
+  expect(read).toEqual(["sdk/CoreLibs/a.lua", "sdk/C_API/b.h"]);
+  expect(out.map((o) => o.dest)).toEqual(["/sdk/CoreLibs/a.lua", "/sdk/C_API/b.h"]);
 });

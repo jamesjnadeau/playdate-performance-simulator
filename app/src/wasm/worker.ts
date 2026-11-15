@@ -80,7 +80,11 @@ function flush() {
     (p) => m._free(p),
   );
   for (const event of events) {
-    if (event.type === "state") running = !!event.running;
+    if (event.type === "state") {
+      const was = running;
+      running = !!event.running;
+      if (was && !running) syncOut();
+    }
     post({ kind: "event", event });
   }
 }
@@ -179,8 +183,8 @@ ctx.onmessage = async (e) => {
       }
     } else {
       send(withHostPaths(msg.cmd, gameName, haveSdk()));
-      if (msg.cmd.type === "pause") syncOut();
       schedule();
+      if (msg.cmd.type === "pause" || msg.cmd.type === "step") syncOut();
     }
   } catch (err) {
     post({ kind: "event", event: { type: "error", message: String(err) } });

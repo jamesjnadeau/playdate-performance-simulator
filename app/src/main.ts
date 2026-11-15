@@ -1,5 +1,5 @@
 import { connect, type Event } from "./backend";
-import { gameName, gamePaths, sdkPaths, unzipEntries } from "./wasm/files";
+import { gameName, gamePaths, readKept, sdkPaths, unzipEntries } from "./wasm/files";
 import { fromDrop, fromInput, isZip, type Picked } from "./wasm/pick";
 import {
   CATEGORIES, SERIES, MEM_COLORS, MEM_LABELS, buildFlame, drawFlame, drawFrames, drawGauge, drawMemory,
@@ -117,36 +117,44 @@ if (backend.kind === "wasm") {
   const sdkInput = $<HTMLInputElement>("sdkInput");
   const zone = $("dropzone");
 
-  const send = (root: "/game" | "/sdk", picked: Picked[], paths: Map<string, string>, name?: string) => {
-    const prefix = root + "/";
-    const files = picked.filter((p) => paths.has(p.path)).map((p) => ({ path: paths.get(p.path)!.slice(prefix.length), data: p.data }));
+  const send = async (root: "/game" | "/sdk", picked: Picked[], paths: Map<string, string>, name?: string) => {
+    const kept = await readKept(picked, paths, (p) => p.read());
+    const files = kept.map((k) => ({ path: k.dest.slice(root.length + 1), data: k.data }));
     backend.loadFiles!(root, files, name);
     return files.length;
   };
-  const loadGame = (picked: Picked[]) => {
+  const loadGame = async (picked: Picked[]) => {
     if (isZip(picked)) {
-      try { picked = unzipEntries(new Uint8Array(picked[0].data)); }
-      catch (err) { toast(`Could not read the zip: ${err}`, true); return; }
+      try {
+        const entries = unzipEntries(new Uint8Array(await picked[0].read()));
+        picked = entries.map((en) => ({ path: en.path, read: async () => en.data }));
+      } catch (err) { toast(`Could not read the zip: ${err}`, true); return; }
     }
     const paths = gamePaths(picked);
     if (paths.size === 0) { toast("No game files found.", true); return; }
-    send("/game", picked, paths, gameName(picked));
+    await send("/game", picked, paths, gameName(picked));
     open();
   };
-  const loadSdk = (picked: Picked[]) => {
+  const loadSdk = async (picked: Picked[]) => {
     const paths = sdkPaths(picked);
     if (paths.size === 0) { toast("That folder has no C_API or CoreLibs; pick the PlaydateSDK folder.", true); return; }
-    const n = send("/sdk", picked, paths);
+    const n = await send("/sdk", picked, paths);
     toast(`Loaded ${n} SDK files.`);
   };
   const guard = (f: () => Promise<void>) => f().catch((err) => toast(`Could not read the files: ${err}`, true));
+  // Reset the input afterwards so picking the same thing again fires `change`.
+  const pick = (input: HTMLInputElement, load: (p: Picked[]) => Promise<void>) => () => {
+    if (!input.files) return;
+    const picked = fromInput(input.files);
+    guard(() => load(picked)).finally(() => (input.value = ""));
+  };
 
   $("openFolder").onclick = (e) => { e.stopPropagation(); folderInput.click(); };
   zone.onclick = () => zipInput.click();
-  folderInput.onchange = () => folderInput.files && guard(async () => loadGame(await fromInput(folderInput.files!)));
-  zipInput.onchange = () => zipInput.files && guard(async () => loadGame(await fromInput(zipInput.files!)));
+  folderInput.onchange = pick(folderInput, loadGame);
+  zipInput.onchange = pick(zipInput, loadGame);
   $("sdkBtn").onclick = () => sdkInput.click();
-  sdkInput.onchange = () => sdkInput.files && guard(async () => loadSdk(await fromInput(sdkInput.files!)));
+  sdkInput.onchange = pick(sdkInput, loadSdk);
   for (const t of ["dragenter", "dragover"]) {
     window.addEventListener(t, (e) => { e.preventDefault(); zone.classList.add("over"); });
   }
