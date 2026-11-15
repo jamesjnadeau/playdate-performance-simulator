@@ -130,11 +130,6 @@ fn missing_backend(name: &str) {
         .current_dir(&root)
         .output()
         .unwrap();
-    // In a workspace build, another crate (pdsim-wasm) can switch the backend
-    // on in pdsim-runner even though pdsim-cli's own feature is off.
-    if out.status.success() {
-        return;
-    }
     assert_eq!(out.status.code(), Some(2));
     let err = String::from_utf8_lossy(&out.stderr);
     assert_eq!(

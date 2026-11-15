@@ -16,8 +16,13 @@ name = "pdsim-web"
 path = "src/main.rs"
 
 [dependencies]
-pdsim-session = { path = "../pdsim-session", default-features = false, features = ["thumb"] }
+pdsim-session = { path = "../pdsim-session", default-features = false }
 serde_json.workspace = true
+
+# C games in the browser run on the Thumb interpreter. Only for the wasm
+# target, so native workspace builds do not get the feature.
+[target.'cfg(target_os = "emscripten")'.dependencies]
+pdsim-session = { path = "../pdsim-session", default-features = false, features = ["thumb"] }
 
 [dev-dependencies]
 base64 = "0.22"
