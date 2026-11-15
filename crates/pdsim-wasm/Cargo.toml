@@ -16,7 +16,7 @@ name = "pdsim-web"
 path = "src/main.rs"
 
 [dependencies]
-pdsim-session = { path = "../pdsim-session", default-features = false }
+pdsim-session = { path = "../pdsim-session", default-features = false, features = ["thumb"] }
 serde_json.workspace = true
 
 [dev-dependencies]

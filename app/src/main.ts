@@ -1,7 +1,7 @@
 import { connect, type Event } from "./backend";
 import { traceFileName } from "./wasm/files";
 import { hostBehind, type PacingSample } from "./wasm/pacing";
-import { gameName, gamePaths, readKept, sdkPaths, unzipEntries } from "./wasm/files";
+import { gameName, gamePaths, needsSdk, readKept, sdkPaths, unzipEntries } from "./wasm/files";
 import { fromDrop, fromInput, isZip, type Picked } from "./wasm/pick";
 import {
   CATEGORIES, SERIES, MEM_COLORS, MEM_LABELS, buildFlame, drawFlame, drawFrames, drawGauge, drawMemory,
@@ -111,6 +111,7 @@ $<HTMLInputElement>("break").onchange = (e) => backend.send({ type: "breakOnOver
 $("trace").onclick = () => backend.send({ type: "exportTrace" });
 
 // ---- loading files in the browser (wasm backend only)
+let sdkLoaded = false; // set by the worker's "sdk" event
 if (backend.kind === "wasm") {
   for (const id of ["path", "calibPath", "open"]) $(id).hidden = true;
   for (const id of ["dropzone", "sdkBtn", "sdkStatus"]) $(id).hidden = false;
@@ -125,6 +126,9 @@ if (backend.kind === "wasm") {
     backend.loadFiles!(root, files, name);
     return files.length;
   };
+  const SDK_PROMPT = "C games need the Playdate SDK's C_API headers. Load your SDK folder (it is kept in this browser).";
+  const wantSdk = (on: boolean) => $("sdkBtn").classList.toggle("needed", on);
+  let pendingGame: Picked[] | null = null; // a C game waiting for the SDK
   const loadGame = async (picked: Picked[]) => {
     if (isZip(picked)) {
       try {
@@ -134,6 +138,13 @@ if (backend.kind === "wasm") {
     }
     const paths = gamePaths(picked);
     if (paths.size === 0) { toast("No game files found.", true); return; }
+    if (needsSdk(picked) && !sdkLoaded) {
+      pendingGame = picked;
+      wantSdk(true);
+      toast(SDK_PROMPT, true);
+      return;
+    }
+    pendingGame = null;
     await send("/game", picked, paths, gameName(picked));
     open();
   };
@@ -142,6 +153,10 @@ if (backend.kind === "wasm") {
     if (paths.size === 0) { toast("That folder has no C_API or CoreLibs; pick the PlaydateSDK folder.", true); return; }
     const n = await send("/sdk", picked, paths);
     toast(`Loaded ${n} SDK files.`);
+    sdkLoaded = true;
+    wantSdk(false);
+    const waiting = pendingGame;
+    if (waiting) await loadGame(waiting);
   };
   const guard = (f: () => Promise<void>) => f().catch((err) => toast(`Could not read the files: ${err}`, true));
   // Reset the input afterwards so picking the same thing again fires `change`.
@@ -426,6 +441,8 @@ backend.onEvent((e) => {
       toast(e.description);
       break;
     case "sdk":
+      sdkLoaded = e.loaded;
+      if (e.loaded) $("sdkBtn").classList.remove("needed");
       $("sdkStatus").textContent = e.loaded ? "SDK: loaded" : "SDK: none (using built-in CoreLibs stand-ins)";
       break;
     case "log": {
@@ -446,6 +463,7 @@ backend.onEvent((e) => {
       toast(`Trace of ${e.frames} frames downloaded as ${traceFileName(e.frame)}\nOpen it in ui.perfetto.dev or chrome://tracing.`);
       break;
     case "error":
+      if (e.message.includes("Load your SDK folder")) $("sdkBtn").classList.add("needed");
       toast(e.message, true, !!e.fatal); // a fatal startup failure stays up
       if (e.fatal) $("log").textContent += e.message + "\n";
       break;

@@ -159,6 +159,15 @@ pub fn load(path: &Path, cfg: &RunConfig) -> Result<Box<dyn Game>, GameError> {
     }
 }
 
+/// Shown when a C game is loaded without an SDK. The browser UI matches on it.
+#[cfg(any(feature = "c-games", feature = "thumb"))]
+const SDK_NEEDED: &str =
+    "C games need the Playdate SDK's C_API headers. Load your SDK folder (it is kept in this browser).";
+#[cfg(all(any(feature = "c-games", feature = "thumb"), not(target_os = "emscripten")))]
+const SDK_NEEDED_HINT: &str = " Natively, set PLAYDATE_SDK_PATH or pass --sdk.";
+#[cfg(all(any(feature = "c-games", feature = "thumb"), target_os = "emscripten"))]
+const SDK_NEEDED_HINT: &str = "";
+
 #[cfg(not(any(feature = "c-games", feature = "thumb")))]
 fn load_c(
     _dev: pdsim_device::SharedDevice,
@@ -172,6 +181,11 @@ fn load_c(
 
 #[cfg(any(feature = "c-games", feature = "thumb"))]
 fn load_c(dev: pdsim_device::SharedDevice, elf: &Path, cfg: &RunConfig) -> Result<Box<dyn Game>, GameError> {
+    if cfg.sdk.is_none() {
+        // The API layout is read from the SDK's C_API headers. The native
+        // build looks at PLAYDATE_SDK_PATH (via RunConfig::default) or --sdk.
+        return Err(GameError(format!("{SDK_NEEDED}{SDK_NEEDED_HINT}")));
+    }
     Ok(Box::new(pdsim_arm::ArmGame::load(
         dev,
         elf,
@@ -200,5 +214,18 @@ mod tests {
         std::fs::write(dir.join("pdex.elf"), b"").unwrap();
         let err = load(&dir, &RunConfig::default()).err().unwrap();
         assert!(err.0.contains("c-games feature"), "{}", err.0);
+    }
+
+    #[cfg(any(feature = "c-games", feature = "thumb"))]
+    #[test]
+    fn c_game_without_sdk_names_the_sdk() {
+        let ex = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/c-stress");
+        let cfg = RunConfig {
+            sdk: None,
+            data_dir: Some(std::env::temp_dir().join("pdsim-runner-no-sdk-data")),
+            ..RunConfig::default()
+        };
+        let err = load(&ex, &cfg).err().expect("loading without an SDK must fail");
+        assert!(err.0.contains("Load your SDK folder"), "{}", err.0);
     }
 }

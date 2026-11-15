@@ -36,6 +36,13 @@ function sharedFolder(list: { segs: string[] }[]): string | null {
   return list.every((e) => e.segs[0] === top) ? top : null;
 }
 
+/** Whether the dropped game is a C game, which needs the SDK's C_API headers. */
+export function needsSdk(entries: { path: string }[]): boolean {
+  const list = usable(entries);
+  const base = (e: { segs: string[] }) => e.segs[e.segs.length - 1];
+  return list.some((e) => base(e) === "pdex.elf") || (list.length === 1 && base(list[0]).endsWith(".elf"));
+}
+
 /** Maps each input path to its place under /game, stripping one shared top folder. */
 export function gamePaths(entries: { path: string }[]): Map<string, string> {
   const list = usable(entries);

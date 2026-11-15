@@ -80,9 +80,11 @@ cargo run --release -p pdsim-cli -- run examples/c-stress --frames 300
 ## Run in the browser
 
 The simulator also runs entirely in a browser tab: no server, no install.
-Lua games only for now (C games need the ARM emulator, which is not in the
-browser build). The Playdate SDK is optional; without it the built-in
-CoreLibs stand-ins are used, and you can load an SDK folder from the page.
+Lua games run as they are; the Playdate SDK is optional (without it the
+built-in CoreLibs stand-ins are used). C games run too, on the pure-Rust Thumb
+interpreter, but they need the SDK's `C_API` headers: use "Load Playdate SDK
+folder..." once. The SDK is kept in your browser, so you don't load it again
+(nothing from the SDK is bundled or uploaded).
 
 ```bash
 source ~/emsdk/emsdk_env.sh             # Emscripten 6.0.13, and: rustup target add wasm32-unknown-emscripten
