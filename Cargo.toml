@@ -29,3 +29,28 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 anyhow = "1"
+
+# Dev builds run games: optimise dependencies fully (Unicorn's C build follows
+# opt-level through cmake) and our own crates lightly, so rebuilds stay quick
+# while `tauri dev` and `cargo run` keep up with real time.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+# The crates that run game code every frame: as fast as release.
+[profile.dev.package.pdsim-arm]
+opt-level = 3
+
+[profile.dev.package.pdsim-lua]
+opt-level = 3
+
+[profile.dev.package.pdsim-core]
+opt-level = 3
+
+[profile.dev.package.pdsim-gfx]
+opt-level = 3
+
+[profile.dev.package.pdsim-device]
+opt-level = 3

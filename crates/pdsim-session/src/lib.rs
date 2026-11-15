@@ -285,6 +285,109 @@ mod tests {
     }
 
     #[test]
+    fn dropping_a_running_session_returns() {
+        let events = Arc::new(Mutex::new(vec![]));
+        let ev = events.clone();
+        let s = Session::spawn(move |v| ev.lock().unwrap().push(v));
+        s.send(Command::Load {
+            path: example(),
+            calibration: None,
+            data_dir: None,
+            sdk: None,
+        });
+        assert!(wait_for(&events, "loaded", Duration::from_secs(20)).is_some());
+        std::thread::sleep(Duration::from_millis(200));
+        // Device mode sleeps between frames; a quit that lands then must still end the thread.
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            drop(s);
+            let _ = done_tx.send(());
+        });
+        assert!(
+            done_rx.recv_timeout(Duration::from_secs(3)).is_ok(),
+            "Session::drop hung while running"
+        );
+    }
+
+    #[test]
+    fn stats_while_running_always_carry_realtime() {
+        // A (re)start must not send a stats event too soon to measure, or the
+        // speed tile blinks '–' on every play.
+        let events = Arc::new(Mutex::new(vec![]));
+        let ev = events.clone();
+        let s = Session::spawn(move |v| ev.lock().unwrap().push(v));
+        std::thread::sleep(Duration::from_millis(150));
+        s.send(Command::Load {
+            path: example(),
+            calibration: None,
+            data_dir: None,
+            sdk: None,
+        });
+        assert!(wait_for(&events, "loaded", Duration::from_secs(20)).is_some());
+        std::thread::sleep(Duration::from_millis(400));
+        s.send(Command::Pause);
+        std::thread::sleep(Duration::from_millis(150));
+        s.send(Command::Play);
+        std::thread::sleep(Duration::from_millis(400));
+        s.send(Command::Pause);
+        std::thread::sleep(Duration::from_millis(100));
+        // Each Pause flushes one null (sent just before its `state`); any more
+        // came from a running session.
+        let nulls = events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| e["type"] == "stats" && e["realtime"].is_null())
+            .count();
+        assert_eq!(nulls, 2, "null realtime stats beyond the two pauses");
+    }
+
+    #[test]
+    fn realtime_ratio_needs_enough_wall_time() {
+        assert_eq!(core::realtime_ratio(100.0, 40.0), None);
+        assert_eq!(core::realtime_ratio(100.0, 100.0), Some(1.0));
+        assert_eq!(core::realtime_ratio(50.0, 100.0), Some(0.5));
+    }
+
+    fn latest_realtime(events: &Arc<Mutex<Vec<Value>>>) -> Option<f64> {
+        events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| e["type"] == "stats")
+            .filter_map(|e| e["realtime"].as_f64())
+            .next_back()
+    }
+
+    #[test]
+    fn stats_report_realtime() {
+        let events = Arc::new(Mutex::new(vec![]));
+        let ev = events.clone();
+        let s = Session::spawn(move |v| ev.lock().unwrap().push(v));
+        s.send(Command::Load {
+            path: example(),
+            calibration: None,
+            data_dir: None,
+            sdk: None,
+        });
+        assert!(wait_for(&events, "loaded", Duration::from_secs(20)).is_some());
+        std::thread::sleep(Duration::from_millis(600));
+        let device = latest_realtime(&events).expect("no realtime in device mode");
+        assert!((0.7..=1.3).contains(&device), "device-mode realtime {device}");
+
+        events.lock().unwrap().clear();
+        s.send(Command::SetMode { mode: "turbo".into() });
+        std::thread::sleep(Duration::from_millis(600));
+        let turbo = latest_realtime(&events).expect("no realtime in turbo");
+        assert!(turbo > 1.5, "turbo realtime {turbo}");
+
+        events.lock().unwrap().clear();
+        s.send(Command::Pause);
+        let paused = wait_for(&events, "stats", Duration::from_secs(1)).unwrap();
+        assert!(paused["realtime"].is_null(), "{paused}");
+    }
+
+    #[test]
     fn breaks_on_over_budget_frame_and_steps() {
         let events = Arc::new(Mutex::new(vec![]));
         let ev = events.clone();

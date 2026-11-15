@@ -37,12 +37,24 @@ pub struct SessionCore {
     // Pacing anchor: device ms at `anchor_wall_ms`.
     anchor_wall_ms: f64,
     anchor_device_ms: f64,
+    // Real-time measurement baseline, kept apart from the pacing anchor
+    // (pacing re-anchors when the host falls behind, which would hide it).
+    rt_wall_ms: f64,
+    rt_device_ms: f64,
     /// Wall time at which the next frame is due (device-speed mode).
     next_frame_ms: f64,
     log_sent: usize,
     path: Option<String>,
     calibration: Calibration,
     loaded_event: Option<Value>,
+}
+
+/// Device ms per wall ms, or `None` if too little wall time passed to tell.
+pub(crate) fn realtime_ratio(device_ms: f64, wall_ms: f64) -> Option<f64> {
+    if wall_ms < 50.0 {
+        return None;
+    }
+    Some(device_ms / wall_ms)
 }
 
 fn b64(bytes: &[u8]) -> String {
@@ -64,6 +76,8 @@ impl SessionCore {
             last_stats_ms: 0.0,
             anchor_wall_ms: 0.0,
             anchor_device_ms: 0.0,
+            rt_wall_ms: 0.0,
+            rt_device_ms: 0.0,
             next_frame_ms: 0.0,
             log_sent: 0,
             path: None,
@@ -99,7 +113,7 @@ impl SessionCore {
         let mut target = self.anchor_wall_ms + ((device_ms - self.anchor_device_ms) / self.speed).max(0.0);
         if now_ms - target > 250.0 {
             // The host fell behind; don't try to catch up in a burst.
-            self.reanchor(now_ms);
+            self.reanchor_pacing(now_ms);
             target = now_ms;
         }
         self.next_frame_ms = target;
@@ -116,13 +130,30 @@ impl SessionCore {
         }));
     }
 
+    fn device_ms(&self) -> f64 {
+        self.game
+            .as_ref()
+            .map_or(0.0, |g| g.device().borrow().scheduler.now_ms())
+    }
+
+    /// Restarts pacing and the real-time measurement from now.
     fn reanchor(&mut self, now_ms: f64) {
+        self.reanchor_pacing(now_ms);
+        self.mark_realtime(now_ms);
+    }
+
+    fn reanchor_pacing(&mut self, now_ms: f64) {
         self.anchor_wall_ms = now_ms;
         self.next_frame_ms = now_ms;
-        self.anchor_device_ms = self
-            .game
-            .as_ref()
-            .map_or(0.0, |g| g.device().borrow().scheduler.now_ms());
+        self.anchor_device_ms = self.device_ms();
+    }
+
+    /// Starts a new real-time window and a full stats interval with it, so the
+    /// next `stats` has enough wall time to measure.
+    fn mark_realtime(&mut self, now_ms: f64) {
+        self.last_stats_ms = now_ms;
+        self.rt_wall_ms = now_ms;
+        self.rt_device_ms = self.device_ms();
     }
 
     /// Applies a command. `now_ms` is the host clock in milliseconds.
@@ -335,6 +366,15 @@ impl SessionCore {
     fn flush_stats(&mut self, now_ms: f64) {
         self.last_stats_ms = now_ms;
         self.send_log();
+        if self.game.is_none() {
+            return;
+        }
+        let realtime = if self.running {
+            realtime_ratio(self.device_ms() - self.rt_device_ms, now_ms - self.rt_wall_ms)
+        } else {
+            None
+        };
+        self.mark_realtime(now_ms);
         let Some(g) = &self.game else { return };
         let frames = std::mem::take(&mut self.pending);
         let d = g.device().borrow();
@@ -350,6 +390,7 @@ impl SessionCore {
             "deviceMs": d.scheduler.now_ms(),
             "refreshRate": d.scheduler.refresh_rate(),
             "memory": last.map(|f| f.memory),
+            "realtime": realtime,
         }));
     }
 
