@@ -1,0 +1,23 @@
+[package]
+name = "pdsim-wasm"
+description = "The simulator session behind a tiny C ABI, for a browser Web Worker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "pdsim_wasm"
+path = "src/lib.rs"
+
+[[bin]]
+name = "pdsim-web"
+path = "src/main.rs"
+
+[dependencies]
+pdsim-session = { path = "../pdsim-session", default-features = false }
+serde_json.workspace = true
+
+[dev-dependencies]
+base64 = "0.22"
