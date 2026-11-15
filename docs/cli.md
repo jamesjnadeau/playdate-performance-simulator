@@ -145,7 +145,9 @@ flame-graph tools take; it is absent with `--no-profile`.
 
 Serves a live session over WebSocket on `127.0.0.1` for the web build of
 the app (`npm run dev` in `app/`). If `GAME` is given, it loads when a UI
-connects. See [session-protocol.md](session-protocol.md) for the messages.
+connects. A plain browser runs the simulator in-page by default, so open the
+app with `?backend=ws` (or `?ws=ws://host:port`) to use this server. See
+[session-protocol.md](session-protocol.md) for the messages.
 
 ## `pdsim default-calibration`
 

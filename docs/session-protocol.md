@@ -4,8 +4,11 @@
 commands and receives events, both JSON objects with a `type` field. The
 Tauri app carries them over IPC (`invoke("send", {cmd})` and the `pdsim`
 event); `pdsim serve` carries them over a WebSocket, one text message per
-command or event. The same frontend (`app/src`) works with either; in a
-browser it connects to `ws://<host>:8765`, or to the URL in `?ws=`.
+command or event. The browser build (`pdsim-wasm`) runs the session in a Web
+Worker and exchanges the same JSON through a C ABI. The same frontend
+(`app/src`) works with all three; in a plain browser it runs the worker by
+default, or connects to `ws://<host>:8765` (or the URL in `?ws=`) when opened
+with `?backend=ws`.
 
 ## Commands
 
