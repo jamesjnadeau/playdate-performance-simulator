@@ -1,6 +1,6 @@
 import { connect, type Event } from "./backend";
 import { hostBehind, type PacingSample } from "./wasm/pacing";
-import { gameName, gamePaths, needsSdk, readKept, sdkPaths, traceFileName, unzipEntries } from "./wasm/files";
+import { gameName, gamePaths, needsSdk, readKept, sdkPaths, traceFileName, unrunnableReason, unzipEntries } from "./wasm/files";
 import { fromDrop, fromInput, isZip, type Picked } from "./wasm/pick";
 import { angleDelta, motionToAccel, padButtons, PAD_START, stickAngle } from "./input";
 import {
@@ -147,6 +147,8 @@ if (backend.kind === "wasm") {
     }
     const paths = gamePaths(picked);
     if (paths.size === 0) { toast("No game files found.", true); return; }
+    const reason = unrunnableReason(picked);
+    if (reason) { toast(reason, true, true); return; }
     if (needsSdk(picked) && !sdkLoaded) {
       pendingGame = picked;
       wantSdk(true);

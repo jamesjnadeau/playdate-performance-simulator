@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { needsSdk, traceFileName, readKept, wantsDir, gameName, gamePaths, sdkPaths, unzipEntries, withHostPaths } from "./files";
+import { needsSdk, unrunnableReason, traceFileName, readKept, wantsDir, gameName, gamePaths, sdkPaths, unzipEntries, withHostPaths } from "./files";
 import { zipSync } from "fflate";
 
 const e = (...paths: string[]) => paths.map((path) => ({ path }));
@@ -99,4 +99,17 @@ test("needsSdk", () => {
   expect(needsSdk(e("g/Source/pdex.elf"))).toBe(true);
   expect(needsSdk(e("game.elf"))).toBe(true);
   expect(needsSdk(e("g/main.lua"))).toBe(false);
+});
+
+test("unrunnableReason", () => {
+  expect(unrunnableReason(e("g/main.lua", "g/img/a.png"))).toBeNull();
+  expect(unrunnableReason(e("g/Source/main.lua"))).toBeNull();
+  expect(unrunnableReason(e("g/pdex.elf", "g/pdex.bin"))).toBeNull();
+  expect(unrunnableReason(e("game.elf"))).toBeNull();
+  expect(unrunnableReason(e("G.pdx/pdex.bin", "G.pdx/pdxinfo"))).toMatch(/pdex\.bin.*pdex\.elf/);
+  expect(unrunnableReason(e("G.pdx/pdex.dylib", "G.pdx/pdxinfo"))).toMatch(/Simulator build.*pdex\.elf/);
+  expect(unrunnableReason(e("G.pdx/main.pdz", "G.pdx/pdxinfo"))).toMatch(/\.pdz.*main\.lua/);
+  expect(unrunnableReason(e("g/readme.txt"))).toMatch(/No main\.lua or pdex\.elf/);
+  // A main.lua hidden in a dot-folder doesn't count.
+  expect(unrunnableReason(e("g/.git/main.lua", "g/x.png"))).toMatch(/No main\.lua/);
 });

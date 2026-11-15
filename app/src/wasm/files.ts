@@ -43,6 +43,30 @@ export function needsSdk(entries: { path: string }[]): boolean {
   return list.some((e) => base(e) === "pdex.elf") || (list.length === 1 && base(list[0]).endsWith(".elf"));
 }
 
+/**
+ * Why the dropped files hold nothing the simulator can run, or null if they
+ * have a main.lua or a .elf. Spots the common mistake of dropping a built .pdx.
+ */
+export function unrunnableReason(entries: { path: string }[]): string | null {
+  const names = new Set(usable(entries).map((e) => e.segs[e.segs.length - 1]));
+  if (names.has("main.lua") || [...names].some((n) => n.endsWith(".elf"))) return null;
+  if (names.has("pdex.bin")) {
+    return "This is a built .pdx: its pdex.bin is the device binary with symbols and relocations stripped, " +
+      "which the simulator cannot run. Run a device build of the game (e.g. make device) and load the " +
+      "project folder with pdex.elf in it, alongside the game's assets.";
+  }
+  if (["pdex.dylib", "pdex.so", "pdex.dll"].some((n) => names.has(n))) {
+    return "This is a Playdate Simulator build (a native pdex library), which the simulator cannot run. " +
+      "Run a device build of the game (e.g. make device) and load the project folder with pdex.elf in it.";
+  }
+  if (names.has("main.pdz")) {
+    return "This is a built .pdx: its Lua is compiled into .pdz files, which the simulator cannot read. " +
+      "Load the game's source folder instead (the one with main.lua).";
+  }
+  return "No main.lua or pdex.elf found. Load a Lua game's source folder (with main.lua), " +
+    "or a C game's project folder with its device build (pdex.elf).";
+}
+
 /** Maps each input path to its place under /game, stripping one shared top folder. */
 export function gamePaths(entries: { path: string }[]): Map<string, string> {
   const list = usable(entries);
