@@ -84,7 +84,10 @@ Lua games run as they are; the Playdate SDK is optional (without it the
 built-in CoreLibs stand-ins are used). C games run too, on the pure-Rust Thumb
 interpreter, but they need the SDK's `C_API` headers: use "Load Playdate SDK
 folder..." once. The SDK is kept in your browser, so you don't load it again
-(nothing from the SDK is bundled or uploaded).
+(nothing from the SDK is bundled or uploaded). The last game is kept too, so a
+reload reopens it. Besides the keyboard you can play with a gamepad (the right
+stick turns the crank), by touch, and on a phone by tilting it ("Use device
+tilt" under Accelerometer).
 
 ```bash
 source ~/emsdk/emsdk_env.sh             # Emscripten 6.0.13, and: rustup target add wasm32-unknown-emscripten

@@ -219,7 +219,11 @@ mod tests {
     #[cfg(any(feature = "c-games", feature = "thumb"))]
     #[test]
     fn c_game_without_sdk_names_the_sdk() {
-        let ex = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/c-stress");
+        // The SDK check comes before the ELF is read, so an empty pdex.elf
+        // will do (the built example is not checked in, so CI has none).
+        let ex = std::env::temp_dir().join(format!("pdsim-runner-no-sdk-game-{}", std::process::id()));
+        std::fs::create_dir_all(&ex).unwrap();
+        std::fs::write(ex.join("pdex.elf"), b"").unwrap();
         let cfg = RunConfig {
             sdk: None,
             data_dir: Some(

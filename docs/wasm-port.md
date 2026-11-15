@@ -230,16 +230,17 @@ or running natively on an aarch64 host can break that equality. Run
 a change.
 
 ## Phase 6: polish
-- Persist the last game and SDK in IndexedDB, so a reload goes straight back
-  in.
-- Gamepad API and touch controls for the d-pad, A/B and crank (drag a dial);
-  `DeviceOrientation` for the accelerometer on phones.
-- Download the report and trace from the page.
-- A size budget: report the `.wasm` size in CI (Lua alone should be well
-  under 2 MB gzipped; Capstone adds a few MB, which is another reason to
-  drop it once the interpreter can classify instructions).
-- Docs: a "Run in the browser" section in the README and
-  [architecture.md](architecture.md).
+- Done: persist the last game and SDK in IndexedDB, so a reload goes straight
+  back in.
+- Done: Gamepad API and touch controls for the d-pad, A/B and crank (drag a
+  dial); `devicemotion` (rather than `DeviceOrientation`, which gives angles,
+  not acceleration) for the accelerometer on phones.
+- Download the trace from the page (done) and the report (not yet: the
+  session has no report command).
+- Done: a size budget. CI fails above 2 MiB gzipped (`scripts/wasm-size.sh`);
+  the build was 1.68 MB gzipped when the budget was added.
+- Done: a "Run in the browser" section in the README and an "In the browser"
+  section in [architecture.md](architecture.md).
 
 ## Out of scope
 - Compiled `.pdx` bundles (Lua bytecode `.pdz` and the compiled asset formats)

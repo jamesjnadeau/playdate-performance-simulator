@@ -107,3 +107,29 @@ callbacks without holding borrows.
   traces come back as `traceData` events (the page downloads them) instead of
   files. The build is single-threaded; Lua only. See `docs/wasm-port.md`.
 - `pdsim run` drives a game headless and writes reports and traces.
+
+## In the browser
+
+The web build is the same app (`app/`) talking to `pdsim-web` in a Web Worker
+(`app/src/wasm/worker.ts`) instead of to a native session:
+
+- **Pacing.** The worker calls `pdsim_tick(now)` in slices of up to 8 ms,
+  then sleeps with `setTimeout` until the next frame is due, or yields through
+  a `MessageChannel` when work is already due, so commands are never starved.
+  The session reports `realtime` (device ms per wall ms) in its stats; the
+  page shows it as "Speed (real time)" and warns when device mode falls
+  behind.
+- **Files.** Games and the SDK are copied into Emscripten's in-memory
+  filesystem under `/game` and `/sdk`; save data goes to `/data/<game>`.
+  All three are mounted on IDBFS and synced to IndexedDB after a load, on
+  pause or step, and once a second while running. On start the worker syncs
+  them back in: an SDK loaded once stays loaded, and if `/game` holds files it
+  sends a `restored` event so the page reopens the last game. A game that
+  killed the worker is remembered in `localStorage` and not reopened.
+- **Input.** Keyboard, the on-page d-pad, buttons and crank dial (pointer
+  events, so touch works), gamepads through the Gamepad API (polled each
+  animation frame; the right stick sets the crank angle), and, on phones,
+  `devicemotion` for the accelerometer once "Use device tilt" is ticked. The
+  pure mappings are in `app/src/input.ts`.
+- **Size.** CI fails if `pdsim_web.wasm` grows past 2 MiB gzipped
+  (`scripts/wasm-size.sh`).
