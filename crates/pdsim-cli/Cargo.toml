@@ -24,3 +24,4 @@ tungstenite = "0.27"
 [features]
 default = ["c-games"]
 c-games = ["pdsim-runner/c-games", "pdsim-session/c-games"]
+thumb = ["pdsim-runner/thumb", "pdsim-session/thumb"]

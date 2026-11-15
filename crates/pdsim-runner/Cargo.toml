@@ -16,3 +16,5 @@ pdsim-arm = { path = "../pdsim-arm", optional = true, default-features = false }
 default = ["c-games"]
 # Loading C games (pdex.elf) needs the ARM emulator; browser builds drop it.
 c-games = ["dep:pdsim-arm", "pdsim-arm/unicorn"]
+# The pure-Rust Thumb interpreter: C games without Unicorn (no GPL code).
+thumb = ["dep:pdsim-arm", "pdsim-arm/thumb"]

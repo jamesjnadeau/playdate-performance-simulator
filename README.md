@@ -184,6 +184,11 @@ which is licensed under the **GPL v2**: binaries that include `pdsim-arm`
 (the CLI, the app) are therefore distributed under the GPL's terms. The
 source code in this repository remains MIT OR Apache-2.0.
 
+A build with `--no-default-features --features thumb` (for example
+`cargo build -p pdsim-cli --no-default-features --features thumb`) runs C
+games on the pure-Rust Thumb interpreter instead. It has no Unicorn, so it
+carries no GPL obligation. Pick the CPU with `pdsim run --cpu unicorn|thumb`.
+
 This project is not affiliated with Panic Inc. The Playdate SDK is not
 included and must never be committed to this repository; the simulator reads
 CoreLibs, fonts and C headers from your own SDK install at run time.

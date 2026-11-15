@@ -51,6 +51,27 @@ pub fn detect(path: &Path) -> Result<GameKind, GameError> {
     )))
 }
 
+/// Which CPU emulator runs a C game (exists when C games are supported).
+#[cfg(any(feature = "c-games", feature = "thumb"))]
+pub use pdsim_arm::Backend as CpuBackend;
+
+/// The CPU a build uses unless told otherwise: Unicorn when it is compiled
+/// in, otherwise the Thumb interpreter.
+#[cfg(feature = "c-games")]
+pub const DEFAULT_CPU: &str = "unicorn";
+#[cfg(not(feature = "c-games"))]
+pub const DEFAULT_CPU: &str = "thumb";
+
+#[cfg(feature = "c-games")]
+fn default_cpu() -> CpuBackend {
+    CpuBackend::Unicorn
+}
+
+#[cfg(all(feature = "thumb", not(feature = "c-games")))]
+fn default_cpu() -> CpuBackend {
+    CpuBackend::Thumb
+}
+
 /// How to run a game.
 #[derive(Debug, Clone)]
 pub struct RunConfig {
@@ -62,6 +83,30 @@ pub struct RunConfig {
     pub sdk: Option<PathBuf>,
     /// Attribute cycles to functions.
     pub profile: bool,
+    /// The CPU emulator for C games.
+    #[cfg(any(feature = "c-games", feature = "thumb"))]
+    pub cpu: CpuBackend,
+}
+
+impl RunConfig {
+    /// Picks the CPU emulator by name (`unicorn` or `thumb`). `Err` carries
+    /// the name when this build doesn't include that backend.
+    #[cfg_attr(not(any(feature = "c-games", feature = "thumb")), allow(unused_variables))]
+    pub fn set_cpu(&mut self, name: &str) -> Result<(), String> {
+        match name {
+            #[cfg(feature = "c-games")]
+            "unicorn" => {
+                self.cpu = CpuBackend::Unicorn;
+                Ok(())
+            }
+            #[cfg(feature = "thumb")]
+            "thumb" => {
+                self.cpu = CpuBackend::Thumb;
+                Ok(())
+            }
+            _ => Err(name.to_string()),
+        }
+    }
 }
 
 impl Default for RunConfig {
@@ -71,6 +116,8 @@ impl Default for RunConfig {
             data_dir: None,
             sdk: Device::sdk_from_env(),
             profile: true,
+            #[cfg(any(feature = "c-games", feature = "thumb"))]
+            cpu: default_cpu(),
         }
     }
 }
@@ -112,7 +159,7 @@ pub fn load(path: &Path, cfg: &RunConfig) -> Result<Box<dyn Game>, GameError> {
     }
 }
 
-#[cfg(not(feature = "c-games"))]
+#[cfg(not(any(feature = "c-games", feature = "thumb")))]
 fn load_c(
     _dev: pdsim_device::SharedDevice,
     _elf: &Path,
@@ -123,14 +170,14 @@ fn load_c(
     ))
 }
 
-#[cfg(feature = "c-games")]
+#[cfg(any(feature = "c-games", feature = "thumb"))]
 fn load_c(dev: pdsim_device::SharedDevice, elf: &Path, cfg: &RunConfig) -> Result<Box<dyn Game>, GameError> {
     Ok(Box::new(pdsim_arm::ArmGame::load(
         dev,
         elf,
         cfg.sdk.as_deref(),
         cfg.profile,
-        pdsim_arm::Backend::default(),
+        cfg.cpu,
     )?))
 }
 
@@ -145,7 +192,7 @@ mod tests {
         assert!(detect(Path::new("/nonexistent")).is_err());
     }
 
-    #[cfg(not(feature = "c-games"))]
+    #[cfg(not(any(feature = "c-games", feature = "thumb")))]
     #[test]
     fn c_games_need_the_feature() {
         let dir = std::env::temp_dir().join("pdsim-runner-no-c-games");

@@ -76,6 +76,7 @@ pub fn simulate(
         data_dir: Some(data.clone()),
         sdk,
         profile: false,
+        ..Default::default()
     };
     let mut g = pdsim_runner::load(game, &cfg).map_err(|e| anyhow::anyhow!(e.0))?;
     g.device().borrow_mut().features = Some(Features::default());
@@ -133,6 +134,7 @@ pub fn run_as_device(
         data_dir: Some(data.clone()),
         sdk,
         profile: false,
+        ..Default::default()
     };
     let mut g = pdsim_runner::load(game, &cfg).map_err(|e| anyhow::anyhow!(e.0))?;
     for _ in 0..20_000 {
