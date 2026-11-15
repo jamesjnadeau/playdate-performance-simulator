@@ -97,6 +97,8 @@ fn text(uc: &Uc, ptr: u32, len: u32, enc: u32) -> String {
     match enc {
         // kUTF16Encoding
         2 => {
+            // as_chunks needs Rust 1.88; the crate supports 1.80.
+            #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
             let u: Vec<u16> = b
                 .chunks_exact(2)
                 .map(|c| u16::from_le_bytes([c[0], c[1]]))
@@ -718,6 +720,8 @@ fn run(uc: &mut Uc, name: &str, a: &[Arg], fmt: Option<String>) -> Option<Ret> {
         "graphics.fillPolygon" => {
             let n = ru(a, 0).min(4096);
             let b = uc.bytes(ru(a, 1), n as usize * 8);
+            // as_chunks needs Rust 1.88; the crate supports 1.80.
+            #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
             let pts: Vec<(i32, i32)> = b
                 .chunks_exact(8)
                 .map(|c| {

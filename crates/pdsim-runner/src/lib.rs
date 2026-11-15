@@ -113,7 +113,11 @@ pub fn load(path: &Path, cfg: &RunConfig) -> Result<Box<dyn Game>, GameError> {
 }
 
 #[cfg(not(feature = "c-games"))]
-fn load_c(_dev: pdsim_device::SharedDevice, _elf: &Path, _cfg: &RunConfig) -> Result<Box<dyn Game>, GameError> {
+fn load_c(
+    _dev: pdsim_device::SharedDevice,
+    _elf: &Path,
+    _cfg: &RunConfig,
+) -> Result<Box<dyn Game>, GameError> {
     Err(GameError(
         "C games are not supported in this build (built without the c-games feature)".into(),
     ))

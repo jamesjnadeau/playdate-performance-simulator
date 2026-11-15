@@ -424,7 +424,9 @@ fn runs_are_deterministic() {
 
 #[test]
 fn lua_errors_cross_rust_frames() {
-    let g = TempGame::new("errors", r#"
+    let g = TempGame::new(
+        "errors",
+        r#"
         local n = 0
         function playdate.update()
             n += 1
@@ -432,7 +434,8 @@ fn lua_errors_cross_rust_frames() {
             assert(not ok, "bad argument should raise")
             if n == 3 then error("boom") end
         end
-    "#);
+    "#,
+    );
     let mut game = g.load();
     assert!(game.frame(None).is_ok());
     assert!(game.frame(None).is_ok());

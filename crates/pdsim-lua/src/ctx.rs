@@ -27,8 +27,11 @@ pub struct Ctx {
     cfunc_names: HashMap<usize, String>,
     /// Per counter slot, once seen: its feature name (`lua.cfunc.math.sin`)
     /// and extra cost, or `None` for C functions without either.
-    cfunc_slots: RefCell<Vec<Option<Option<(String, f64)>>>>,
+    cfunc_slots: RefCell<Vec<CfuncSlot>>,
 }
+
+/// A seen counter slot's feature name and extra cost, if it has them.
+type CfuncSlot = Option<Option<(String, f64)>>;
 
 pub type CtxRef = Rc<Ctx>;
 
