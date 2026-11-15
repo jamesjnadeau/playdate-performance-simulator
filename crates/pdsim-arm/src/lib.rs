@@ -6,14 +6,18 @@
 pub mod abi;
 pub mod api;
 pub mod cost;
+pub mod cpu;
 pub mod elf;
 pub mod emu;
 pub mod heap;
 pub mod layout;
+#[cfg(feature = "unicorn")]
+pub mod unicorn_cpu;
 
+pub use cpu::Backend;
 pub use emu::ArmGame;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "unicorn"))]
 mod emulator_sanity {
     use unicorn_engine::unicorn_const::{Arch, Mode, Prot};
     use unicorn_engine::{ArmCpuModel, RegisterARM, Unicorn};

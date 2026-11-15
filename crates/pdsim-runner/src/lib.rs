@@ -130,6 +130,7 @@ fn load_c(dev: pdsim_device::SharedDevice, elf: &Path, cfg: &RunConfig) -> Resul
         elf,
         cfg.sdk.as_deref(),
         cfg.profile,
+        pdsim_arm::Backend::default(),
     )?))
 }
 

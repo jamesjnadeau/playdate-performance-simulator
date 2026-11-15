@@ -2,6 +2,7 @@
 
 use crate::abi::{Arg, Machine};
 use crate::cost::{BlockCoster, BlockInfo, Exit};
+use crate::cpu::{Backend, Cpu, CpuError, Hooks, Reg};
 use crate::elf::{self, Image};
 use crate::heap::Heap;
 use crate::layout::{Kind, Layout, Member, Signature};
@@ -9,8 +10,6 @@ use pdsim_core::{Category, FrameStats};
 use pdsim_device::{Game, GameError, InputScript, SharedDevice};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use unicorn_engine::unicorn_const::{Arch, Mode, Prot};
-use unicorn_engine::{ArmCpuModel, RegisterARM, Unicorn};
 
 /// Where the game's code is loaded (as on the device).
 pub const CODE_BASE: u32 = 0x6000_0000;
@@ -184,22 +183,22 @@ impl ArmState {
 }
 
 /// Register access for the ABI decoder.
-pub struct Regs<'a, 'b>(pub &'a Unicorn<'b, ArmState>);
+pub struct Regs<'a>(pub &'a dyn Cpu<ArmState>);
 
-impl Machine for Regs<'_, '_> {
+impl Machine for Regs<'_> {
     fn core(&self, n: usize) -> u32 {
-        let r = [RegisterARM::R0, RegisterARM::R1, RegisterARM::R2, RegisterARM::R3][n];
-        self.0.reg_read(r).unwrap_or(0) as u32
+        assert!(n < 4, "r{n} is not an argument register");
+        self.0.reg_read(Reg::R(n as u8))
     }
     fn sreg(&self, n: usize) -> f32 {
-        f32::from_bits(self.0.reg_read(RegisterARM::S0 as i32 + n as i32).unwrap_or(0) as u32)
+        f32::from_bits(self.0.reg_read(Reg::S(n as u8)))
     }
     fn sp(&self) -> u32 {
-        self.0.reg_read(RegisterARM::SP).unwrap_or(0) as u32
+        self.0.reg_read(Reg::Sp)
     }
     fn read_u32(&self, addr: u32) -> u32 {
         let mut b = [0u8; 4];
-        let _ = self.0.mem_read(addr as u64, &mut b);
+        let _ = self.0.mem_read(addr, &mut b);
         u32::from_le_bytes(b)
     }
 }
@@ -219,15 +218,15 @@ pub trait Mem {
     fn write(&mut self, a: u32, b: &[u8]);
 }
 
-impl Mem for Unicorn<'_, ArmState> {
+impl Mem for dyn Cpu<ArmState> + '_ {
     fn r32(&self, a: u32) -> u32 {
         let mut b = [0u8; 4];
-        let _ = self.mem_read(a as u64, &mut b);
+        let _ = self.mem_read(a, &mut b);
         u32::from_le_bytes(b)
     }
     fn w32(&mut self, a: u32, v: u32) {
         if a != 0 {
-            let _ = self.mem_write(a as u64, &v.to_le_bytes());
+            let _ = self.mem_write(a, &v.to_le_bytes());
         }
     }
     fn cstr(&self, a: u32) -> String {
@@ -235,7 +234,7 @@ impl Mem for Unicorn<'_, ArmState> {
             return String::new();
         }
         let mut out = vec![];
-        let mut p = a as u64;
+        let mut p = a;
         let mut chunk = [0u8; 64];
         loop {
             if self.mem_read(p, &mut chunk).is_err() {
@@ -261,35 +260,33 @@ impl Mem for Unicorn<'_, ArmState> {
         String::from_utf8_lossy(&out).into_owned()
     }
     fn bytes(&self, a: u32, n: usize) -> Vec<u8> {
-        self.mem_read_as_vec(a as u64, n).unwrap_or_default()
+        let mut b = vec![0; n];
+        match self.mem_read(a, &mut b) {
+            Ok(()) => b,
+            Err(_) => vec![],
+        }
     }
     fn write(&mut self, a: u32, b: &[u8]) {
-        let _ = self.mem_write(a as u64, b);
+        let _ = self.mem_write(a, b);
     }
 }
 
 /// Sets a return value.
-pub fn set_ret(uc: &mut Unicorn<'_, ArmState>, kind: Option<Kind>, v: Ret) {
+pub fn set_ret(cpu: &mut dyn Cpu<ArmState>, kind: Option<Kind>, v: Ret) {
     match (kind, v) {
         (_, Ret::None) | (None, _) => {}
-        (Some(Kind::Float), Ret::F(f)) => {
-            let _ = uc.reg_write(RegisterARM::S0, f.to_bits() as u64);
-        }
+        (Some(Kind::Float), Ret::F(f)) => cpu.reg_write(Reg::S(0), f.to_bits()),
         (Some(Kind::PdRect), Ret::Rect(r)) => {
             for (i, f) in r.iter().enumerate() {
-                let _ = uc.reg_write(RegisterARM::S0 as i32 + i as i32, f.to_bits() as u64);
+                cpu.reg_write(Reg::S(i as u8), f.to_bits());
             }
         }
         (Some(Kind::Int64), Ret::I(i)) => {
-            let _ = uc.reg_write(RegisterARM::R0, i as u64);
-            let _ = uc.reg_write(RegisterARM::R1, 0);
+            cpu.reg_write(Reg::R(0), i);
+            cpu.reg_write(Reg::R(1), 0);
         }
-        (_, Ret::I(i)) => {
-            let _ = uc.reg_write(RegisterARM::R0, i as u64);
-        }
-        (_, Ret::F(f)) => {
-            let _ = uc.reg_write(RegisterARM::R0, f as i32 as u32 as u64);
-        }
+        (_, Ret::I(i)) => cpu.reg_write(Reg::R(0), i),
+        (_, Ret::F(f)) => cpu.reg_write(Reg::R(0), f as i32 as u32),
         (_, Ret::Rect(_)) => {}
     }
 }
@@ -303,80 +300,75 @@ pub enum Ret {
     Rect([f32; 4]),
 }
 
-const CALLEE_SAVED: [RegisterARM; 14] = [
-    RegisterARM::R0,
-    RegisterARM::R1,
-    RegisterARM::R2,
-    RegisterARM::R3,
-    RegisterARM::R4,
-    RegisterARM::R5,
-    RegisterARM::R6,
-    RegisterARM::R7,
-    RegisterARM::R8,
-    RegisterARM::R9,
-    RegisterARM::R10,
-    RegisterARM::R11,
-    RegisterARM::R12,
-    RegisterARM::LR,
+const CALLEE_SAVED: [Reg; 14] = [
+    Reg::R(0),
+    Reg::R(1),
+    Reg::R(2),
+    Reg::R(3),
+    Reg::R(4),
+    Reg::R(5),
+    Reg::R(6),
+    Reg::R(7),
+    Reg::R(8),
+    Reg::R(9),
+    Reg::R(10),
+    Reg::R(11),
+    Reg::R(12),
+    Reg::Lr,
 ];
 
 /// Calls game function `f` with integer arguments; returns r0. Usable from
 /// inside an API hook (nested emulation); registers are preserved.
-pub fn call(uc: &mut Unicorn<'_, ArmState>, f: u32, args: &[u32]) -> Result<u32, String> {
-    call_full(uc, f, args, &[])
+pub fn call(cpu: &mut dyn Cpu<ArmState>, st: &mut ArmState, f: u32, args: &[u32]) -> Result<u32, String> {
+    call_full(cpu, st, f, args, &[])
 }
 
 /// Like [`call`], also passing single-precision arguments in s0, s1, ...
-pub fn call_full(uc: &mut Unicorn<'_, ArmState>, f: u32, args: &[u32], fargs: &[f32]) -> Result<u32, String> {
+pub fn call_full(
+    cpu: &mut dyn Cpu<ArmState>,
+    st: &mut ArmState,
+    f: u32,
+    args: &[u32],
+    fargs: &[f32],
+) -> Result<u32, String> {
     if f == 0 {
         return Ok(0);
     }
-    let saved: Vec<u64> = CALLEE_SAVED
-        .iter()
-        .map(|r| uc.reg_read(*r).unwrap_or(0))
-        .collect();
-    let sp = uc.reg_read(RegisterARM::SP).unwrap_or(STACK_TOP as u64);
-    let pc = uc.reg_read(RegisterARM::PC).unwrap_or(0);
-    let st_saved = {
-        let st = uc.get_data_mut();
-        let s = (st.stack.clone(), st.stack_id, st.last_exit);
-        st.last_exit = Exit::Call;
-        s
-    };
-    let regs = [RegisterARM::R0, RegisterARM::R1, RegisterARM::R2, RegisterARM::R3];
+    let saved: Vec<u32> = CALLEE_SAVED.iter().map(|r| cpu.reg_read(*r)).collect();
+    let sp = cpu.reg_read(Reg::Sp);
+    let pc = cpu.reg_read(Reg::Pc);
+    let st_saved = (st.stack.clone(), st.stack_id, st.last_exit);
+    st.last_exit = Exit::Call;
     for (i, a) in args.iter().take(4).enumerate() {
-        let _ = uc.reg_write(regs[i], *a as u64);
+        cpu.reg_write(Reg::R(i as u8), *a);
     }
     // Further arguments go on the stack.
-    let mut sp_new = (sp as u32) & !7;
+    let mut sp_new = sp & !7;
     if args.len() > 4 {
         let extra = &args[4..];
         sp_new -= (extra.len() as u32 * 4).div_ceil(8) * 8;
         for (i, a) in extra.iter().enumerate() {
-            uc.w32(sp_new + 4 * i as u32, *a);
+            cpu.w32(sp_new + 4 * i as u32, *a);
         }
     }
     for (i, v) in fargs.iter().take(16).enumerate() {
-        let _ = uc.reg_write(RegisterARM::S0 as i32 + i as i32, v.to_bits() as u64);
+        cpu.reg_write(Reg::S(i as u8), v.to_bits());
     }
-    let _ = uc.reg_write(RegisterARM::SP, sp_new as u64);
-    let _ = uc.reg_write(RegisterARM::LR, (RETURN_ADDR | 1) as u64);
-    let r = uc.emu_start((f | 1) as u64, RETURN_ADDR as u64, 0, 0);
+    cpu.reg_write(Reg::Sp, sp_new);
+    cpu.reg_write(Reg::Lr, RETURN_ADDR | 1);
+    let r = cpu.emu_start(f | 1, RETURN_ADDR, st, &ArmHooks);
     // Describe a fault now: the registers are restored below.
-    let crash = r.err().map(|e| crash_message(uc, e));
-    let ret = uc.reg_read(RegisterARM::R0).unwrap_or(0) as u32;
+    let crash = r.err().map(|e| crash_message(cpu, st, &e));
+    let ret = cpu.reg_read(Reg::R(0));
     for (r, v) in CALLEE_SAVED.iter().zip(saved) {
-        let _ = uc.reg_write(*r, v);
+        cpu.reg_write(*r, v);
     }
-    let _ = uc.reg_write(RegisterARM::SP, sp);
-    let _ = uc.reg_write(RegisterARM::PC, pc);
-    {
-        let st = uc.get_data_mut();
-        st.stack = st_saved.0;
-        st.stack_id = st_saved.1;
-        st.last_exit = st_saved.2;
-    }
-    if let Some(e) = uc.get_data().error.clone() {
+    cpu.reg_write(Reg::Sp, sp);
+    cpu.reg_write(Reg::Pc, pc);
+    st.stack = st_saved.0;
+    st.stack_id = st_saved.1;
+    st.last_exit = st_saved.2;
+    if let Some(e) = st.error.clone() {
         return Err(e);
     }
     if let Some(msg) = crash {
@@ -385,26 +377,109 @@ pub fn call_full(uc: &mut Unicorn<'_, ArmState>, f: u32, args: &[u32], fargs: &[
     Ok(ret)
 }
 
-fn crash_message(uc: &Unicorn<'_, ArmState>, e: unicorn_engine::unicorn_const::uc_error) -> String {
-    let pc = uc.reg_read(RegisterARM::PC).unwrap_or(0) as u32;
-    let st = uc.get_data();
+fn crash_message(cpu: &dyn Cpu<ArmState>, st: &ArmState, e: &CpuError) -> String {
+    let pc = e.pc;
     let sym = st
         .image
         .symbol_at(pc)
         .map(|i| st.image.symbols[i].name.clone())
         .unwrap_or_else(|| "?".into());
-    let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0) as u32;
+    let lr = cpu.reg_read(Reg::Lr);
     let lr_sym = st
         .image
         .symbol_at(lr & !1)
         .map(|i| st.image.symbols[i].name.clone())
         .unwrap_or_else(|| "?".into());
-    format!("C game crashed: {e:?} at pc {pc:#010x} ({sym}), lr {lr:#010x} ({lr_sym})")
+    format!(
+        "C game crashed: {} at pc {pc:#010x} ({sym}), lr {lr:#010x} ({lr_sym})",
+        e.kind
+    )
+}
+
+/// What the CPU calls back into while game code runs: block costing and
+/// API calls.
+struct ArmHooks;
+
+impl Hooks<ArmState> for ArmHooks {
+    /// Costs a basic block of game code.
+    fn on_block(&self, cpu: &mut dyn Cpu<ArmState>, st: &mut ArmState, a: u32, size: u32) {
+        // Only game code is costed (blocks in other writable memory are not).
+        if !(CODE_BASE..=st.image.text_end).contains(&a) {
+            return;
+        }
+        if !st.blocks.contains_key(&a) {
+            let code = cpu.bytes(a, size as usize);
+            let info = st.coster.cost(&code, a as u64);
+            let sym = st.image.symbol_at(a).map_or(u32::MAX, |i| i as u32);
+            st.blocks.insert(a, (info, sym));
+        }
+        let (info, sym) = st.blocks[&a];
+        match st.last_exit {
+            Exit::Call if st.stack.len() >= MAX_STACK_DEPTH => st.stack_overflow += 1,
+            Exit::Call => {
+                st.stack.push(sym);
+                st.intern();
+            }
+            Exit::Return if st.stack_overflow > 0 => st.stack_overflow -= 1,
+            Exit::Return => {
+                st.stack.pop();
+                if st.stack.last() != Some(&sym) {
+                    if let Some(t) = st.stack.last_mut() {
+                        *t = sym;
+                    } else {
+                        st.stack.push(sym);
+                    }
+                }
+                st.intern();
+            }
+            Exit::Fallthrough => {
+                if st.stack.last() != Some(&sym) {
+                    if let Some(t) = st.stack.last_mut() {
+                        *t = sym;
+                    } else {
+                        st.stack.push(sym);
+                    }
+                    st.intern();
+                }
+            }
+        }
+        st.last_exit = info.exit;
+        st.pending += info.cycles;
+        for (k, n) in info.classes.iter().enumerate() {
+            st.class_counts[k] += *n as f64;
+        }
+        st.registers += info.registers as f64;
+        st.frame_cycles += info.cycles;
+        let id = st.stack_id;
+        if let Some(c) = st.stack_cycles.get_mut(id) {
+            *c += info.cycles;
+        }
+        if st.frame_cycles > st.watchdog && st.error.is_none() {
+            st.error = Some("C game ran for over 10 s of device time in one frame (infinite loop?)".into());
+            cpu.emu_stop();
+        }
+    }
+
+    /// An API call: the game jumped to trampoline `(addr - TRAMP_BASE) / 4`.
+    fn on_trampoline(&self, cpu: &mut dyn Cpu<ArmState>, st: &mut ArmState, addr: u32) {
+        if addr >= RETURN_ADDR {
+            return;
+        }
+        let idx = ((addr - TRAMP_BASE) / 4) as usize;
+        let lr = cpu.reg_read(Reg::Lr);
+        st.last_exit = Exit::Fallthrough;
+        crate::api::dispatch(cpu, st, idx);
+        if st.error.is_some() {
+            cpu.emu_stop();
+        }
+        cpu.reg_write(Reg::Pc, lr);
+    }
 }
 
 /// A C game running in the emulator.
 pub struct ArmGame {
-    uc: Unicorn<'static, ArmState>,
+    cpu: Box<dyn Cpu<ArmState>>,
+    st: ArmState,
     dev: SharedDevice,
     path: String,
 }
@@ -413,8 +488,8 @@ fn gerr(e: impl std::fmt::Display) -> GameError {
     GameError(e.to_string())
 }
 
-fn uerr(what: &str) -> impl Fn(unicorn_engine::unicorn_const::uc_error) -> GameError + '_ {
-    move |e| GameError(format!("{what}: {e:?}"))
+fn uerr(what: &str) -> impl Fn(CpuError) -> GameError + '_ {
+    move |e| GameError(format!("{what}: {}", e.kind))
 }
 
 /// Builds the API structs in memory: returns the bytes of the API region, the
@@ -473,6 +548,7 @@ impl ArmGame {
         elf_path: &Path,
         sdk: Option<&Path>,
         profile: bool,
+        backend: Backend,
     ) -> Result<ArmGame, GameError> {
         let sdk = sdk.ok_or_else(|| {
             GameError("C games need the Playdate SDK (set PLAYDATE_SDK_PATH): the API layout is read from its headers".into())
@@ -516,122 +592,45 @@ impl ArmGame {
             class_counts: [0.0; 12],
             registers: 0.0,
         };
-        let mut uc =
-            Unicorn::new_with_data(Arch::ARM, Mode::THUMB | Mode::MCLASS, state).map_err(uerr("unicorn"))?;
-        uc.ctl_set_cpu_model(ArmCpuModel::CORTEX_M7.into())
-            .map_err(uerr("cpu model"))?;
-        let code_len = (uc.get_data().image.bytes.len() as u64).div_ceil(0x10000) * 0x10000;
-        uc.mem_map(CODE_BASE as u64, code_len.max(0x10000), Prot::ALL)
+        let mut cpu = backend.build::<ArmState>().map_err(uerr("unicorn"))?;
+        let code_len = (state.image.bytes.len() as u32).div_ceil(0x10000) * 0x10000;
+        cpu.mem_map(CODE_BASE, code_len.max(0x10000), true)
             .map_err(uerr("map code"))?;
-        let bytes = uc.get_data().image.bytes.clone();
-        uc.mem_write(CODE_BASE as u64, &bytes)
+        cpu.mem_write(CODE_BASE, &state.image.bytes)
             .map_err(uerr("write code"))?;
-        uc.mem_map(HEAP_BASE as u64, HEAP_SIZE as u64, Prot::READ | Prot::WRITE)
+        cpu.mem_map(HEAP_BASE, HEAP_SIZE, true)
             .map_err(uerr("map heap"))?;
-        uc.mem_map(STACK_BASE as u64, STACK_SIZE as u64, Prot::READ | Prot::WRITE)
+        cpu.mem_map(STACK_BASE, STACK_SIZE, true)
             .map_err(uerr("map stack"))?;
-        uc.mem_map(API_BASE as u64, API_SIZE as u64, Prot::READ | Prot::WRITE)
-            .map_err(uerr("map api"))?;
-        uc.mem_write(API_BASE as u64, &api_bytes)
-            .map_err(uerr("write api"))?;
-        uc.mem_map(TRAMP_BASE as u64, TRAMP_SIZE as u64, Prot::READ | Prot::EXEC)
+        cpu.mem_map(API_BASE, API_SIZE, true).map_err(uerr("map api"))?;
+        cpu.mem_write(API_BASE, &api_bytes).map_err(uerr("write api"))?;
+        // Read-only memory runs `on_trampoline` for each instruction.
+        cpu.mem_map(TRAMP_BASE, TRAMP_SIZE, false)
             .map_err(uerr("map trampolines"))?;
         let tramp: Vec<u8> = std::iter::repeat_n([0x70u8, 0x47], TRAMP_SIZE as usize / 2)
             .flatten()
             .collect();
-        uc.mem_write(TRAMP_BASE as u64, &tramp)
+        cpu.mem_write(TRAMP_BASE, &tramp)
             .map_err(uerr("write trampolines"))?;
 
-        // Cost every basic block of game code.
-        let text_end = uc.get_data().image.text_end;
-        uc.add_block_hook(CODE_BASE as u64, text_end as u64, |uc, addr, size| {
-            let a = addr as u32;
-            if !uc.get_data().blocks.contains_key(&a) {
-                let code = uc.mem_read_as_vec(addr, size as usize).unwrap_or_default();
-                let st = uc.get_data_mut();
-                let info = st.coster.cost(&code, addr);
-                let sym = st.image.symbol_at(a).map_or(u32::MAX, |i| i as u32);
-                st.blocks.insert(a, (info, sym));
-            }
-            let st = uc.get_data_mut();
-            let (info, sym) = st.blocks[&a];
-            match st.last_exit {
-                Exit::Call if st.stack.len() >= MAX_STACK_DEPTH => st.stack_overflow += 1,
-                Exit::Call => {
-                    st.stack.push(sym);
-                    st.intern();
-                }
-                Exit::Return if st.stack_overflow > 0 => st.stack_overflow -= 1,
-                Exit::Return => {
-                    st.stack.pop();
-                    if st.stack.last() != Some(&sym) {
-                        if let Some(t) = st.stack.last_mut() {
-                            *t = sym;
-                        } else {
-                            st.stack.push(sym);
-                        }
-                    }
-                    st.intern();
-                }
-                Exit::Fallthrough => {
-                    if st.stack.last() != Some(&sym) {
-                        if let Some(t) = st.stack.last_mut() {
-                            *t = sym;
-                        } else {
-                            st.stack.push(sym);
-                        }
-                        st.intern();
-                    }
-                }
-            }
-            st.last_exit = info.exit;
-            st.pending += info.cycles;
-            for (k, n) in info.classes.iter().enumerate() {
-                st.class_counts[k] += *n as f64;
-            }
-            st.registers += info.registers as f64;
-            st.frame_cycles += info.cycles;
-            let id = st.stack_id;
-            if let Some(c) = st.stack_cycles.get_mut(id) {
-                *c += info.cycles;
-            }
-            if st.frame_cycles > st.watchdog && st.error.is_none() {
-                st.error =
-                    Some("C game ran for over 10 s of device time in one frame (infinite loop?)".into());
-                let _ = uc.emu_stop();
-            }
-        })
-        .map_err(uerr("block hook"))?;
-        // API calls.
-        uc.add_code_hook(TRAMP_BASE as u64, (RETURN_ADDR - 1) as u64, |uc, addr, _| {
-            let idx = ((addr as u32 - TRAMP_BASE) / 4) as usize;
-            let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
-            uc.get_data_mut().last_exit = Exit::Fallthrough;
-            crate::api::dispatch(uc, idx);
-            if uc.get_data().error.is_some() {
-                let _ = uc.emu_stop();
-            }
-            let _ = uc.reg_write(RegisterARM::PC, lr);
-        })
-        .map_err(uerr("code hook"))?;
-
         let mut g = ArmGame {
-            uc,
+            cpu,
+            st: state,
             dev,
             path: elf_path.display().to_string(),
         };
         // kEventInit
-        let entry = g.uc.get_data().image.entry;
-        let root = g.uc.get_data().api_root;
+        let entry = g.st.image.entry;
+        let root = g.st.api_root;
         g.top_call(entry, &[root, 0, 0])?;
-        g.uc.get_data_mut().sync();
-        g.uc.get_data_mut().flush_profile();
+        g.st.sync();
+        g.st.flush_profile();
         {
             let mut d = g.dev.borrow_mut();
             d.profile = Default::default();
             d.ledger.take_frame();
         }
-        if g.uc.get_data().update_cb.is_none() {
+        if g.st.update_cb.is_none() {
             return Err(GameError(
                 "the game did not call setUpdateCallback during kEventInit (Lua+C hybrid games are not supported)".into(),
             ));
@@ -640,19 +639,21 @@ impl ArmGame {
     }
 
     fn top_call(&mut self, f: u32, args: &[u32]) -> Result<u32, GameError> {
-        let _ = self.uc.reg_write(RegisterARM::SP, STACK_TOP as u64);
-        {
-            let st = self.uc.get_data_mut();
-            st.stack.clear();
-            st.intern();
-            st.frame_cycles = 0.0;
-        }
-        call(&mut self.uc, f, args).map_err(GameError)
+        self.cpu.reg_write(Reg::Sp, STACK_TOP);
+        self.st.stack.clear();
+        self.st.intern();
+        self.st.frame_cycles = 0.0;
+        call(&mut *self.cpu, &mut self.st, f, args).map_err(GameError)
     }
 
-    /// The emulator (for tests and tools).
-    pub fn emulator(&mut self) -> &mut Unicorn<'static, ArmState> {
-        &mut self.uc
+    /// The CPU (for tests and tools).
+    pub fn cpu(&mut self) -> &mut dyn Cpu<ArmState> {
+        &mut *self.cpu
+    }
+
+    /// The emulator-side state (for tests and tools).
+    pub fn state(&mut self) -> &mut ArmState {
+        &mut self.st
     }
 
     /// Calls a function in the game with integer arguments.
@@ -662,12 +663,12 @@ impl ArmGame {
 
     fn frame_to_emu(&mut self) {
         let data = self.dev.borrow().gfx.frame().data.clone();
-        let _ = self.uc.mem_write(FRAME_ADDR as u64, &data);
+        let _ = self.cpu.mem_write(FRAME_ADDR, &data);
     }
 
     fn frame_from_emu(&mut self) {
         let n = pdsim_core::LCD_ROWSIZE * pdsim_core::LCD_HEIGHT;
-        let data = self.uc.bytes(FRAME_ADDR, n);
+        let data = self.cpu.bytes(FRAME_ADDR, n);
         if data.len() != n {
             return;
         }
@@ -690,13 +691,12 @@ impl ArmGame {
 
     /// Syncs the frame mirror before an API call that reads or draws the
     /// frame (only when the game uses `getFrame`).
-    pub fn before_gfx(uc: &mut Unicorn<'_, ArmState>) {
-        if !uc.get_data().frame_mirror {
+    pub fn before_gfx(cpu: &mut dyn Cpu<ArmState>, st: &mut ArmState) {
+        if !st.frame_mirror {
             return;
         }
         let n = pdsim_core::LCD_ROWSIZE * pdsim_core::LCD_HEIGHT;
-        let data = uc.bytes(FRAME_ADDR, n);
-        let st = uc.get_data();
+        let data = cpu.bytes(FRAME_ADDR, n);
         let mut d = st.dev.borrow_mut();
         let rs = pdsim_core::LCD_ROWSIZE;
         let mut changed = vec![];
@@ -715,12 +715,12 @@ impl ArmGame {
     }
 
     /// Copies the frame back into the mirror after a drawing call.
-    pub fn after_gfx(uc: &mut Unicorn<'_, ArmState>) {
-        if !uc.get_data().frame_mirror {
+    pub fn after_gfx(cpu: &mut dyn Cpu<ArmState>, st: &mut ArmState) {
+        if !st.frame_mirror {
             return;
         }
-        let data = uc.get_data().dev.borrow().gfx.frame().data.clone();
-        let _ = uc.mem_write(FRAME_ADDR as u64, &data);
+        let data = st.dev.borrow().gfx.frame().data.clone();
+        let _ = cpu.mem_write(FRAME_ADDR, &data);
     }
 }
 
@@ -734,15 +734,15 @@ impl Game for ArmGame {
             return Err(GameError(e));
         }
         self.dev.borrow_mut().begin_frame(script);
-        if self.uc.get_data().frame_mirror {
+        if self.st.frame_mirror {
             self.frame_to_emu();
         }
-        let (f, ud) = self.uc.get_data().update_cb.unwrap_or((0, 0));
+        let (f, ud) = self.st.update_cb.unwrap_or((0, 0));
         let r = self.top_call(f, &[ud]);
-        if self.uc.get_data().frame_mirror {
+        if self.st.frame_mirror {
             self.frame_from_emu();
         }
-        let st = self.uc.get_data_mut();
+        let st = &mut self.st;
         st.sync();
         st.flush_profile();
         let heap = st.heap.bytes_in_use;

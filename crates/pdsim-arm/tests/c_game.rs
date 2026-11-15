@@ -1,7 +1,7 @@
 //! Builds `examples/c-stress` with the Playdate SDK (when it and
 //! `arm-none-eabi-gcc` are available) and runs it in the emulator.
 
-use pdsim_arm::ArmGame;
+use pdsim_arm::{ArmGame, Backend};
 use pdsim_core::{Calibration, Category, FrameStats};
 use pdsim_device::{Device, Game};
 use std::path::{Path, PathBuf};
@@ -40,16 +40,32 @@ fn build_example() -> Option<(PathBuf, PathBuf)> {
 
 fn load() -> Option<ArmGame> {
     let (elf, sdk) = build_example()?;
+    Some(load_elf(&elf, &sdk, Backend::default()))
+}
+
+/// Loads the already-built `examples/c-stress` ELF without rebuilding it.
+/// Needs the SDK (for the API layout) and the ELF; `None` when either is
+/// missing.
+fn load_c_stress(backend: Backend) -> Option<ArmGame> {
+    let sdk = Device::sdk_from_env()?;
+    let elf = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/c-stress/Source/pdex.elf");
+    if !elf.exists() {
+        return None;
+    }
+    Some(load_elf(&elf, &sdk, backend))
+}
+
+fn load_elf(elf: &Path, sdk: &Path, backend: Backend) -> ArmGame {
     let data = std::env::temp_dir().join(format!("pdsim-arm-test-{}", std::process::id()));
     std::fs::create_dir_all(&data).unwrap();
     let dev = Device::new(
         Calibration::default_estimates(),
         elf.parent().unwrap(),
         &data,
-        Some(sdk.clone()),
+        Some(sdk.to_path_buf()),
     )
     .shared();
-    Some(ArmGame::load(dev, &elf, Some(&sdk), true).unwrap())
+    ArmGame::load(dev, elf, Some(sdk), true, backend).unwrap()
 }
 
 #[test]
@@ -89,4 +105,20 @@ fn costing_is_deterministic() {
         let fb = b.frame(None).unwrap();
         assert_eq!(fa.cycles, fb.cycles);
     }
+}
+
+/// Per-frame cycle totals of the first five frames of `examples/c-stress`,
+/// recorded on Unicorn before the `Cpu` trait existed (at ea3c424).
+const C_STRESS_FIRST_5_FRAMES: [u64; 5] = [500087, 500020, 500090, 500070, 500084];
+
+#[test]
+fn nested_call_from_trampoline_restores_the_outer_call() {
+    // examples/c-stress registers a sprite update function; run 5 frames through the trait and
+    // compare the per-frame cycle totals with the values recorded before this change.
+    let Some(mut g) = load_c_stress(Backend::default()) else {
+        eprintln!("PLAYDATE_SDK_PATH not set or examples/c-stress not built; skipping");
+        return;
+    };
+    let cycles: Vec<u64> = (0..5).map(|_| g.frame(None).unwrap().cycles.total()).collect();
+    assert_eq!(cycles, C_STRESS_FIRST_5_FRAMES);
 }

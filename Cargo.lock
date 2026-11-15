@@ -2451,6 +2451,7 @@ dependencies = [
  "capstone",
  "goblin",
  "pdsim-core",
+ "pdsim-cpu",
  "pdsim-device",
  "pdsim-gfx",
  "unicorn-engine",
@@ -2479,6 +2480,10 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
 ]
+
+[[package]]
+name = "pdsim-cpu"
+version = "0.1.0"
 
 [[package]]
 name = "pdsim-device"
