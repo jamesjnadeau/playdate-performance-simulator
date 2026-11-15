@@ -6,14 +6,18 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Pinned so a new Rust release (and its new clippy lints) can't break CI
+  # on its own; bump it deliberately.
+  RUST_TOOLCHAIN: "1.99.1"
 
 jobs:
   check:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - name: fmt
@@ -31,8 +35,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: system libraries for the Tauri app crate
@@ -58,8 +63,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: wasm32-unknown-emscripten
       - uses: Swatinem/rust-cache@v2
       - uses: mymindstorm/setup-emsdk@v14
