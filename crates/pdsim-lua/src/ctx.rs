@@ -104,8 +104,7 @@ impl Ctx {
         let delta = now.since(&self.last.borrow());
         *self.last.borrow_mut() = now;
         let cfuncs = self.cfunc_calls(&delta);
-        let vm = self.costs.vm_cycles(&delta)
-            + cfuncs.iter().map(|(_, n, k)| n * k).sum::<f64>();
+        let vm = self.costs.vm_cycles(&delta) + cfuncs.iter().map(|(_, n, k)| n * k).sum::<f64>();
         let gc = self.costs.gc_cycles(&delta);
         {
             let mut d = self.dev();

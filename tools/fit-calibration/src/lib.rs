@@ -346,7 +346,10 @@ fn nnls(a: &[Vec<f64>], b: &[f64]) -> Vec<f64> {
     // Solves the equations restricted to the free set; the rest stay zero.
     let solve_free = |free: &[bool]| -> Vec<f64> {
         let idx: Vec<usize> = (0..n).filter(|i| free[*i]).collect();
-        let sub = idx.iter().map(|&i| idx.iter().map(|&j| a[i][j]).collect()).collect();
+        let sub = idx
+            .iter()
+            .map(|&i| idx.iter().map(|&j| a[i][j]).collect())
+            .collect();
         let rhs = idx.iter().map(|&i| b[i]).collect();
         let mut s = vec![0.0; n];
         if let Some(sol) = solve(sub, rhs) {
@@ -358,7 +361,9 @@ fn nnls(a: &[Vec<f64>], b: &[f64]) -> Vec<f64> {
     };
     for _ in 0..3 * n {
         // The most promising bound cost: steepest descent among those at zero.
-        let grad: Vec<f64> = (0..n).map(|i| b[i] - (0..n).map(|j| a[i][j] * z[j]).sum::<f64>()).collect();
+        let grad: Vec<f64> = (0..n)
+            .map(|i| b[i] - (0..n).map(|j| a[i][j] * z[j]).sum::<f64>())
+            .collect();
         let Some(k) = (0..n)
             .filter(|i| !free[*i] && grad[*i] > tol)
             .max_by(|i, j| grad[*i].partial_cmp(&grad[*j]).unwrap())

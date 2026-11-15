@@ -138,16 +138,17 @@ pub fn cfunc_names(lua: &mlua::Lua) -> HashMap<usize, String> {
     unsafe {
         lua.exec_raw::<()>((), |l| {
             // Calls `add` for each C function in the table on top of the stack.
-            let scan = |l: *mut lua_State, prefix: &str, add: &mut dyn FnMut(Option<lua_CFunction>, String)| {
-                lua_pushnil(l);
-                while lua_next(l, -2) != 0 {
-                    if lua_type(l, -2) == LUA_TSTRING && lua_iscfunction(l, -1) != 0 {
-                        let k = CStr::from_ptr(lua_tostring(l, -2)).to_string_lossy();
-                        add(lua_tocfunction(l, -1), format!("{prefix}{k}"));
+            let scan =
+                |l: *mut lua_State, prefix: &str, add: &mut dyn FnMut(Option<lua_CFunction>, String)| {
+                    lua_pushnil(l);
+                    while lua_next(l, -2) != 0 {
+                        if lua_type(l, -2) == LUA_TSTRING && lua_iscfunction(l, -1) != 0 {
+                            let k = CStr::from_ptr(lua_tostring(l, -2)).to_string_lossy();
+                            add(lua_tocfunction(l, -1), format!("{prefix}{k}"));
+                        }
+                        lua_pop(l, 1);
                     }
-                    lua_pop(l, 1);
-                }
-            };
+                };
             lua_pushglobaltable(l);
             scan(l, "", &mut add);
             lua_pop(l, 1);
