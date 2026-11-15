@@ -81,7 +81,7 @@ fn ci_limits_fail_the_run() {
 /// Runs `examples/c-stress` for 60 frames with `args` and returns the report
 /// file, or `None` when there is no built ELF or no SDK (the SDK supplies
 /// `pd_api.h`, which C games need).
-#[cfg(feature = "thumb")]
+#[cfg(all(feature = "c-games", feature = "thumb"))]
 fn run_c_stress(args: &[&str]) -> Option<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     if !root.join("examples/c-stress/Source/pdex.elf").exists()
@@ -108,7 +108,7 @@ fn run_c_stress(args: &[&str]) -> Option<PathBuf> {
     Some(report)
 }
 
-#[cfg(feature = "thumb")]
+#[cfg(all(feature = "c-games", feature = "thumb"))]
 #[test]
 fn thumb_and_unicorn_reports_are_identical() {
     let (Some(a), Some(b)) = (
@@ -148,4 +148,16 @@ fn a_backend_that_is_not_built_in_exits_2() {
 #[test]
 fn unicorn_not_built_in_exits_2() {
     missing_backend("unicorn");
+}
+
+/// A Lua run with no `--cpu` works in every build, even one without C games.
+#[test]
+fn a_lua_run_needs_no_cpu_backend() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let out = Command::new(env!("CARGO_BIN_EXE_pdsim"))
+        .args(["run", "examples/lua-stress", "--frames", "5", "-q"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
 }

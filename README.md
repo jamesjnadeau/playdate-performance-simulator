@@ -179,9 +179,10 @@ Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
 
 Third-party code: Lua 5.4.9 (MIT, vendored in `crates/pdsim-lua/vendor`),
 DejaVu Sans Mono glyphs for the fallback font (Bitstream Vera license). The
-C backend links the [Unicorn](https://www.unicorn-engine.org/) emulator,
-which is licensed under the **GPL v2**: binaries that include `pdsim-arm`
-(the CLI, the app) are therefore distributed under the GPL's terms. The
+default C backend links the [Unicorn](https://www.unicorn-engine.org/)
+emulator, which is licensed under the **GPL v2**: binaries built with Unicorn
+(`pdsim-arm`'s `unicorn` feature, on by default in the CLI and the app) are
+therefore distributed under the GPL's terms. The
 source code in this repository remains MIT OR Apache-2.0.
 
 A build with `--no-default-features --features thumb` (for example

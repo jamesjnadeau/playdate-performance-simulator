@@ -36,7 +36,12 @@ jobs:
       - name: Thumb vs Unicorn lockstep and fuzz
         run: cargo test -p pdsim-arm --features unicorn,thumb --test lockstep --test thumb_vs_unicorn
       - name: GPL-free (thumb-only) build
-        run: cargo build -p pdsim-cli --no-default-features --features thumb
+        run: |
+          cargo build -p pdsim-cli --no-default-features --features thumb
+          if cargo tree -p pdsim-cli --no-default-features --features thumb | grep -i unicorn; then
+            echo "thumb-only build pulls in Unicorn" >&2
+            exit 1
+          fi
       - name: report parity (skips without the SDK and ELFs)
         run: scripts/thumb-parity.sh
 

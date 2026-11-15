@@ -65,9 +65,9 @@ struct RunArgs {
     /// Playdate SDK (defaults to $PLAYDATE_SDK_PATH).
     #[arg(long)]
     sdk: Option<PathBuf>,
-    /// CPU emulator for C games.
-    #[arg(long, value_parser = ["unicorn", "thumb"], default_value = pdsim_runner::DEFAULT_CPU)]
-    cpu: String,
+    /// CPU emulator for C games (default: unicorn if built in, else thumb).
+    #[arg(long, value_parser = ["unicorn", "thumb"])]
+    cpu: Option<String>,
     /// Skip per-function attribution (faster).
     #[arg(long)]
     no_profile: bool,
@@ -114,9 +114,11 @@ fn run(a: RunArgs) -> Result<()> {
         profile: !a.no_profile,
         ..Default::default()
     };
-    if let Err(name) = cfg.set_cpu(&a.cpu) {
-        eprintln!("pdsim: this build has no {name} CPU (rebuild with --features {name})");
-        std::process::exit(2);
+    if let Some(name) = &a.cpu {
+        if cfg.set_cpu(name).is_err() {
+            eprintln!("pdsim: this build has no {name} CPU (rebuild with --features {name})");
+            std::process::exit(2);
+        }
     }
     let mut game = pdsim_runner::load(&a.game, &cfg).map_err(|e| anyhow::anyhow!(e.0))?;
     if !a.quiet {

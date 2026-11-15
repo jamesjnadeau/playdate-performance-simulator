@@ -33,7 +33,7 @@ Games run from source: PNG images and `.fnt` fonts, not a compiled `.pdx`.
 | `--calibration FILE` | built-in estimates | Calibration profile, e.g. `calibration/rev-a.json`. |
 | `--data-dir DIR` | `$TMPDIR/pdsim-data/<game>` | Where the game's saved data lives (`playdate.datastore`, `playdate.file` writes). Reads look here first, then in the game folder. |
 | `--sdk DIR` | `$PLAYDATE_SDK_PATH` | Playdate SDK, for CoreLibs, the system font and (C games) `pd_api.h`. |
-| `--cpu unicorn\|thumb` | `unicorn` if built in, else `thumb` | CPU emulator for C games. `thumb` is the pure-Rust interpreter and needs a build with `--features thumb`; both give byte-identical reports. Asking for a backend this build lacks prints `pdsim: this build has no <name> CPU (rebuild with --features <name>)` and exits 2. |
+| `--cpu unicorn\|thumb` | `unicorn` if built in, else `thumb` | CPU emulator for C games. `thumb` is the pure-Rust interpreter and needs a build with `--features thumb`, and `unicorn` needs `--features unicorn` (an alias for the default `c-games`); both give byte-identical reports. Asking for a backend this build lacks prints `pdsim: this build has no <name> CPU (rebuild with --features <name>)` and exits 2. |
 | `--no-profile` | off | Skip per-function attribution. Faster; the report has no hotspots. |
 | `--max-over-budget N` | none | Exit 1 if more than `N` frames go over budget. |
 | `--max-avg-ms X` | none | Exit 1 if the average frame work exceeds `X` ms. |
