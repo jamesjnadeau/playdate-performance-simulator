@@ -10,6 +10,12 @@ const built = path.join(root, 'target/wasm32-unknown-emscripten/release/pdsim-we
 const { default: createPdsim } = await import(pathToFileURL(built).href);
 const m = await createPdsim();
 
+// Everything app/src/wasm/worker.ts touches at startup must be exported.
+const missing = ['FS', 'HEAPU8', 'IDBFS', '_malloc', '_free', '_pdsim_new', '_pdsim_send', '_pdsim_tick', '_pdsim_poll'].filter(
+  (k) => m[k] === undefined,
+);
+if (missing.length) throw new Error(`module does not export: ${missing.join(', ')}`);
+
 function copyTree(src, dst) {
   m.FS.mkdirTree(dst);
   for (const e of fs.readdirSync(src, { withFileTypes: true })) {

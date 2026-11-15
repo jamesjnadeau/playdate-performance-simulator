@@ -25,8 +25,8 @@ type Module = {
     mount(type: unknown, opts: object, mountpoint: string): void;
     syncfs(populate: boolean, cb: (err?: unknown) => void): void;
     analyzePath(p: string): { exists: boolean };
-    filesystems: { IDBFS: unknown };
   };
+  IDBFS: unknown;
 };
 
 const ctx = self as unknown as {
@@ -150,12 +150,12 @@ function writeFiles(root: string, files: { path: string; data: ArrayBuffer }[]) 
 }
 
 async function start() {
-  const url = ctx.name || new URL("/pdsim-web.js", self.location.origin).href;
+  const url = ctx.name || new URL("pdsim-web.js", self.location.href).href;
   const mod = await import(/* @vite-ignore */ url);
   m = (await mod.default()) as Module;
   for (const dir of PERSISTED) {
     m.FS.mkdirTree(dir);
-    m.FS.mount(m.FS.filesystems.IDBFS, {}, dir);
+    m.FS.mount(m.IDBFS, {}, dir);
   }
   await new Promise<void>((resolve, reject) => m.FS.syncfs(true, (err) => (err ? reject(err) : resolve())));
   announceSdk();

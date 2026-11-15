@@ -175,13 +175,13 @@ function localStorageSet(k: string, v: string) {
   try { localStorage.setItem(k, v); } catch { /* ignore */ }
 }
 
-function toast(msg: string, error = false) {
+function toast(msg: string, error = false, sticky = false) {
   const t = $("toast");
   t.textContent = msg;
   t.className = error ? "toast error" : "toast";
   t.style.display = "block";
   clearTimeout((toast as any).timer);
-  (toast as any).timer = setTimeout(() => (t.style.display = "none"), error ? 12000 : 4000);
+  if (!sticky) (toast as any).timer = setTimeout(() => (t.style.display = "none"), error ? 12000 : 4000);
 }
 
 // ---- input
@@ -446,7 +446,8 @@ backend.onEvent((e) => {
       toast(`Trace of ${e.frames} frames downloaded as ${traceFileName(e.frame)}\nOpen it in ui.perfetto.dev or chrome://tracing.`);
       break;
     case "error":
-      toast(e.message, true);
+      toast(e.message, true, !!e.fatal); // a fatal startup failure stays up
+      if (e.fatal) $("log").textContent += e.message + "\n";
       break;
   }
 });

@@ -10,7 +10,7 @@ fn main() {
         "-sEXPORT_ES6=1",
         "-sEXPORT_NAME=createPdsim",
         "-sENVIRONMENT=worker,node",
-        "-sEXPORTED_RUNTIME_METHODS=FS,HEAPU8",
+        "-sEXPORTED_RUNTIME_METHODS=FS,HEAPU8,IDBFS",
         "-sEXPORTED_FUNCTIONS=_pdsim_new,_pdsim_send,_pdsim_tick,_pdsim_poll,_malloc,_free",
         "-sALLOW_MEMORY_GROWTH=1",
         "-lidbfs.js",

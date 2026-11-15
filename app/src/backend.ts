@@ -72,7 +72,7 @@ function connectWasm(params: URLSearchParams): Backend {
   worker.onmessage = (m: MessageEvent<FromWorker>) => {
     const msg = m.data;
     if (msg.kind === "event") emit(msg.event);
-    else if (msg.kind === "fatal") emit({ type: "error", message: msg.message });
+    else if (msg.kind === "fatal") emit({ type: "error", message: msg.message, fatal: true });
     else {
       const q = pending ?? [];
       pending = null;
