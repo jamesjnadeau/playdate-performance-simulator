@@ -22,6 +22,8 @@ fn main() {
         "windows" => {
             b.define("LUA_USE_WINDOWS", None);
         }
+        // Portable ANSI defaults (no POSIX popen/dlopen/etc).
+        "emscripten" => {}
         _ => {
             b.define("LUA_USE_POSIX", None);
         }
@@ -42,6 +44,10 @@ fn main() {
         if p.extension().is_some_and(|x| x == "h") {
             println!("cargo:rerun-if-changed={}", p.display());
         }
+    }
+    if target_os == "emscripten" {
+        // Must match the link-time -sSUPPORT_LONGJMP in .cargo/config.toml.
+        b.flag("-sSUPPORT_LONGJMP=wasm");
     }
     b.compile("pdsimlua");
     if target_os == "linux" {

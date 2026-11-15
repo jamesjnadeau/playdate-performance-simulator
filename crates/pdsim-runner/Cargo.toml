@@ -10,4 +10,9 @@ repository.workspace = true
 pdsim-core = { path = "../pdsim-core" }
 pdsim-device = { path = "../pdsim-device" }
 pdsim-lua = { path = "../pdsim-lua" }
-pdsim-arm = { path = "../pdsim-arm" }
+pdsim-arm = { path = "../pdsim-arm", optional = true }
+
+[features]
+default = ["c-games"]
+# Loading C games (pdex.elf) needs the ARM emulator; browser builds drop it.
+c-games = ["dep:pdsim-arm"]

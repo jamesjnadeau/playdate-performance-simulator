@@ -9,7 +9,11 @@ repository.workspace = true
 [dependencies]
 pdsim-core = { path = "../pdsim-core" }
 pdsim-device = { path = "../pdsim-device" }
-pdsim-runner = { path = "../pdsim-runner" }
+pdsim-runner = { path = "../pdsim-runner", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 base64 = "0.22"
+
+[features]
+default = ["c-games"]
+c-games = ["pdsim-runner/c-games"]

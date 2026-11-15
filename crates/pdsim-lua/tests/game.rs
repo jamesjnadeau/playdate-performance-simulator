@@ -421,3 +421,21 @@ fn runs_are_deterministic() {
         assert_eq!(ga.frame(None).unwrap().cycles, gb.frame(None).unwrap().cycles);
     }
 }
+
+#[test]
+fn lua_errors_cross_rust_frames() {
+    let g = TempGame::new("errors", r#"
+        local n = 0
+        function playdate.update()
+            n += 1
+            local ok = pcall(playdate.graphics.setPattern, "bogus")
+            assert(not ok, "bad argument should raise")
+            if n == 3 then error("boom") end
+        end
+    "#);
+    let mut game = g.load();
+    assert!(game.frame(None).is_ok());
+    assert!(game.frame(None).is_ok());
+    let err = game.frame(None).unwrap_err();
+    assert!(err.0.contains("boom"), "{}", err.0);
+}

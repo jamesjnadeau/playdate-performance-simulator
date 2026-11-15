@@ -14,9 +14,13 @@ path = "src/main.rs"
 pdsim-core = { path = "../pdsim-core" }
 pdsim-device = { path = "../pdsim-device" }
 pdsim-lua = { path = "../pdsim-lua" }
-pdsim-runner = { path = "../pdsim-runner" }
+pdsim-runner = { path = "../pdsim-runner", default-features = false }
 clap = { version = "4", features = ["derive"] }
 serde_json.workspace = true
 anyhow.workspace = true
-pdsim-session = { path = "../pdsim-session" }
+pdsim-session = { path = "../pdsim-session", default-features = false }
 tungstenite = "0.27"
+
+[features]
+default = ["c-games"]
+c-games = ["pdsim-runner/c-games", "pdsim-session/c-games"]

@@ -1,0 +1,12 @@
+# Unwinding / longjmp: Lua errors are C longjmps that cross Rust frames (mlua).
+# Settled on Emscripten's wasm-native pair: -sSUPPORT_LONGJMP=wasm here and in
+# crates/pdsim-lua/build.rs, with the Rust target's default panic strategy.
+# It linked and passed lua_errors_cross_rust_frames under Node, so neither the
+# JS-based pair (-sSUPPORT_LONGJMP=emscripten) nor panic=abort was needed.
+[target.wasm32-unknown-emscripten]
+runner = "node"
+rustflags = [
+  "-C", "link-arg=-sSUPPORT_LONGJMP=wasm",
+  "-C", "link-arg=-sALLOW_MEMORY_GROWTH=1",
+  "-C", "link-arg=-sSTACK_SIZE=5MB",
+]

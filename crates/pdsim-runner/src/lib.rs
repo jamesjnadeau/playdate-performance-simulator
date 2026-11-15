@@ -112,6 +112,14 @@ pub fn load(path: &Path, cfg: &RunConfig) -> Result<Box<dyn Game>, GameError> {
     }
 }
 
+#[cfg(not(feature = "c-games"))]
+fn load_c(_dev: pdsim_device::SharedDevice, _elf: &Path, _cfg: &RunConfig) -> Result<Box<dyn Game>, GameError> {
+    Err(GameError(
+        "C games are not supported in this build (built without the c-games feature)".into(),
+    ))
+}
+
+#[cfg(feature = "c-games")]
 fn load_c(dev: pdsim_device::SharedDevice, elf: &Path, cfg: &RunConfig) -> Result<Box<dyn Game>, GameError> {
     Ok(Box::new(pdsim_arm::ArmGame::load(
         dev,
@@ -130,5 +138,15 @@ mod tests {
         let ex = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/lua-stress");
         assert!(matches!(detect(&ex).unwrap(), GameKind::Lua(p) if p.ends_with("Source")));
         assert!(detect(Path::new("/nonexistent")).is_err());
+    }
+
+    #[cfg(not(feature = "c-games"))]
+    #[test]
+    fn c_games_need_the_feature() {
+        let dir = std::env::temp_dir().join("pdsim-runner-no-c-games");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("pdex.elf"), b"").unwrap();
+        let err = load(&dir, &RunConfig::default()).err().unwrap();
+        assert!(err.0.contains("c-games feature"), "{}", err.0);
     }
 }
