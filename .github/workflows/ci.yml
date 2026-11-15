@@ -18,6 +18,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: fmt
         run: cargo fmt --all --check
+      - name: system libraries for the Tauri app crate
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: test
@@ -31,6 +35,10 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+      - name: system libraries for the Tauri app crate
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev
       - name: clippy with the thumb feature
         run: cargo clippy --workspace --all-targets --features pdsim-cli/thumb -- -D warnings
       - name: Thumb vs Unicorn lockstep and fuzz
